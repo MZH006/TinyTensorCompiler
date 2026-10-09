@@ -140,6 +140,9 @@ class Operation{
         const std::vector<Tensor*>& getInputs() const {
             return inputs;
         }
+
+        virtual void execute() = 0;
+        virtual ~Operation() = default;
     
         private:
             std::string name;
@@ -151,13 +154,22 @@ class Operation{
 
 
 class Add : public Operation {
-public:
-    Add(Tensor* a, Tensor* b)
-        : Operation("Add", {a, b}, a->getShape()) {
-            if (a->getShape() != b->getShape()){
-                throw std::invalid_argument("Shape of inputs do not match");
-            }
+    public:
+        Add(Tensor* a, Tensor* b)
+            : Operation("Add", {a, b}, checkedShape(a, b)) {
+        }
+    
+    void execute() override {
+        std::cout << "Executing Add\n";
     }
+    
+    private:
+        static std::vector<std::size_t> checkedShape(Tensor* a, Tensor* b) {
+            if (a->getShape() != b->getShape()){
+                    throw std::invalid_argument("Shape of inputs do not match");
+                }
+            return a->getShape();
+        }   
 };
 
 
@@ -187,19 +199,17 @@ void getExecutionOrder(
 int main() {
     Tensor x("x", {1.0f, 2.0f}, {1, 2});
     Tensor y("y", {1.0f, 3.0f}, {1, 2});
-
     Add add(&x, &y);
-    // ReLU is still a generic graph node until we implement its behavior.
-    Operation relu("ReLU", {add.getOutput()}, {1, 2});
 
     std::unordered_set<Operation*> visited;
     std::vector<Operation*> order;
-    getExecutionOrder(relu.getOutput(), visited, order);
+    getExecutionOrder(add.getOutput(), visited, order);
 
-    std::cout << "Execution order: ";
+    std::cout << "Executing graph:\n";
     for (Operation* op : order) {
-        std::cout << op->getName() << " ";
+        op->execute();
     }
-    std::cout << "\n\nFinal output (before execution):\n";
-    relu.getOutput()->print();
+
+    std::cout << "\nOutput after temporary execute():\n";
+    add.getOutput()->print();
 }
