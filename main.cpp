@@ -160,7 +160,15 @@ class Add : public Operation {
         }
     
     void execute() override {
-        std::cout << "Executing Add\n";
+        const std::vector<float>& a = getInputs()[0]->getData();
+        const std::vector<float>& b = getInputs()[1]->getData();
+
+        std::vector<float> result(a.size());
+        for (std::size_t i = 0; i < a.size(); i++) {
+            result[i] = a[i] + b[i];
+        }
+
+        getOutput()->setData(result);
     }
     
     private:
@@ -175,6 +183,22 @@ class Add : public Operation {
 
 
 
+
+class ReLU : public Operation {
+public:
+    ReLU(Tensor* input)
+        : Operation("ReLU", {input}, input->getShape()) {
+    }
+
+    void execute() override {
+        const std::vector<float>& input = getInputs()[0]->getData();
+        std::vector<float> result(input.size());
+        for (std::size_t i = 0; i < input.size(); i++) {
+            result[i] = input[i] < 0.0f ? 0.0f : input[i];
+        }
+        getOutput()->setData(result);
+    }
+};
 
 void getExecutionOrder(
     Tensor* tensor,
@@ -198,18 +222,26 @@ void getExecutionOrder(
 
 int main() {
     Tensor x("x", {1.0f, 2.0f}, {1, 2});
-    Tensor y("y", {1.0f, 3.0f}, {1, 2});
+    Tensor y("y", {-3.0f, 3.0f}, {1, 2});
     Add add(&x, &y);
+    ReLU relu(add.getOutput());
 
     std::unordered_set<Operation*> visited;
     std::vector<Operation*> order;
-    getExecutionOrder(add.getOutput(), visited, order);
+    getExecutionOrder(relu.getOutput(), visited, order);
 
-    std::cout << "Executing graph:\n";
     for (Operation* op : order) {
+        std::cout << "Executing " << op->getName() << "\n";
         op->execute();
     }
 
-    std::cout << "\nOutput after temporary execute():\n";
-    add.getOutput()->print();
+    std::cout << "Add output: ";
+    for (float value : add.getOutput()->getData()) {
+        std::cout << value << " ";
+    }
+    std::cout << "\nReLU output: ";
+    for (float value : relu.getOutput()->getData()) {
+        std::cout << value << " ";
+    }
+    std::cout << "\n";
 }
