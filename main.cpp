@@ -167,6 +167,13 @@ class Operation{
             }
         }
 
+        void disconnectInputs() {
+            for (Tensor* input : inputs) {
+                input->removeConsumer(this);
+            }
+            inputs.clear();
+        }
+
         virtual void execute() = 0;
         virtual ~Operation() = default;
     
@@ -302,6 +309,10 @@ private:
     }
 };
 
+    std::unique_ptr<Operation> buildFusedAddReLU(Operation* add) {
+        return std::make_unique<FusedAddReLU>(add->getInputs()[0], add->getInputs()[1]);
+    }
+
 void getExecutionOrder(
     Tensor* tensor,
     std::unordered_set<Operation*>& visited,
@@ -322,6 +333,13 @@ void getExecutionOrder(
         order.push_back(op);
     }
 
+void redirectConsumers(Tensor* old_output, Tensor* new_output) {
+    auto consumers = old_output->getConsumers();
+    for (auto consumer: consumers) {
+        consumer->replaceInput(old_output, new_output);
+    }
+}
+
 int main() {
     Tensor x("x", {1.0f, 2.0f}, {1, 2});
     Tensor weights("weights", {3.0f, 4.0f, 5.0f, 6.0f}, {2, 2});
@@ -330,6 +348,7 @@ int main() {
     MatMul matmul(&x, &weights);
     Add add(matmul.getOutput(), &bias);
     ReLU relu(add.getOutput());
+    ReLU downstream(relu.getOutput());
     std::cout << "Matches: " << matchesAddReLU(&add, &relu) << "\n";
 
     std::unordered_set<Operation*> visited;
@@ -346,9 +365,31 @@ int main() {
     }
 
     // This unique_ptr owns the replacement operation until main() ends.
-    auto fused = std::make_unique<FusedAddReLU>(
-        matmul.getOutput(), &bias);
+    auto fused = buildFusedAddReLU(&add);
     fused->execute();
+
+    redirectConsumers(relu.getOutput(), fused->getOutput());
+    relu.disconnectInputs();
+    add.disconnectInputs();
+
+    // The old order contains detached operations; rebuild from the final output.
+    visited.clear();
+    order.clear();
+    getExecutionOrder(downstream.getOutput(), visited, order);
+    std::cout << "Execution order after rewrite: ";
+    for (Operation* op : order) {
+        std::cout << op->getName() << " ";
+    }
+    std::cout << "\n";
+    visited.clear();
+    order.clear();
+    getExecutionOrder(downstream.getOutput(), visited, order);
+    std::cout << "Downstream uses fused output: "
+              << (downstream.getInputs()[0] == fused->getOutput()) << "\n";
+    std::cout << "Old ReLU output consumers: "
+              << relu.getOutput()->getConsumers().size() << "\n";
+    std::cout << "Fused output consumers: "
+              << fused->getOutput()->getConsumers().size() << "\n";
 
     std::cout << "FusedAddReLU output: ";
     for (float value : fused->getOutput()->getData()) {
