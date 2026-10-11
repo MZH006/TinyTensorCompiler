@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <algorithm>
 #include <memory>
+#include <functional>
 
 class Operation;
 
@@ -313,6 +314,55 @@ private:
         return std::make_unique<FusedAddReLU>(add->getInputs()[0], add->getInputs()[1]);
     }
 
+
+
+struct FusionPattern {
+    std::string name;
+    std::vector<std::string> chain;
+    std::function<
+        std::unique_ptr<Operation>(const std::vector<Operation*>&)
+    > build;
+
+    bool match(const std::vector<Operation*>& order, std::size_t i) const {
+        if (chain.empty() || i > order.size() || chain.size() > order.size() - i) {
+            return false;
+        }
+
+        for (std::size_t j = 0; j < chain.size(); j++) {
+            Operation *op = order[i+j];
+
+            if  ( (*op).getName() != chain[j] ) {
+                return false;
+            }
+
+            if (j>0) {
+                Operation *prev = order[i+j-1];
+                if ( (std::find(op->getInputs().begin(), op->getInputs().end(), prev->getOutput())) == op->getInputs().end()) {
+                    return false;
+                }
+            }
+
+            if (j < chain.size() - 1) {
+                if (op->getOutput()->getConsumers().size() != 1) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+
+    }
+};
+
+
+std::unique_ptr<Operation> buildAddReLUPattern(
+    const std::vector<Operation*>& ops) {
+    return buildFusedAddReLU(ops[0]);
+}
+
+
+
+
 void getExecutionOrder(
     Tensor* tensor,
     std::unordered_set<Operation*>& visited,
@@ -340,6 +390,34 @@ void redirectConsumers(Tensor* old_output, Tensor* new_output) {
     }
 }
 
+std::unique_ptr<Operation> fuseAddReLU(Operation* add, Operation* relu) {
+    if (matchesAddReLU(add, relu)) {
+        auto fused = buildFusedAddReLU(add);
+        redirectConsumers(relu->getOutput(), fused->getOutput());
+        relu->disconnectInputs();
+        add->disconnectInputs();
+        return fused;
+    }
+    return nullptr;
+}
+
+std::unique_ptr<Operation> applyPattern(
+    const FusionPattern& pattern,
+    std::vector<Operation*>& order,
+    std::size_t i) {
+    if (!pattern.match(order, i)) {
+        return nullptr;
+    }
+
+    std::vector<Operation*> matched;
+    for (std::size_t j = 0; j < pattern.chain.size(); j++) {
+        matched.push_back(order[i + j]);
+    }
+
+    // Temporary: building and rewriting will be added next.
+    return nullptr;
+}
+
 int main() {
     Tensor x("x", {1.0f, 2.0f}, {1, 2});
     Tensor weights("weights", {3.0f, 4.0f, 5.0f, 6.0f}, {2, 2});
@@ -355,6 +433,14 @@ int main() {
     std::vector<Operation*> order;
     getExecutionOrder(relu.getOutput(), visited, order);
 
+    FusionPattern pattern{
+        "add_relu",
+        {"Add", "ReLU"},
+        buildAddReLUPattern
+    };
+    std::cout << "Match at 1: " << pattern.match(order, 1) << "\n";
+    std::cout << "Match at 0: " << pattern.match(order, 0) << "\n";
+
     for (Operation* op : order) {
         op->execute();
         std::cout << op->getName() << " output: ";
@@ -364,13 +450,11 @@ int main() {
         std::cout << "\n";
     }
 
-    // This unique_ptr owns the replacement operation until main() ends.
-    auto fused = buildFusedAddReLU(&add);
-    fused->execute();
-
-    redirectConsumers(relu.getOutput(), fused->getOutput());
-    relu.disconnectInputs();
-    add.disconnectInputs();
+    auto fused = fuseAddReLU(&add, &relu);
+    if (!fused) {
+        std::cout << "No fusion match\n";
+        return 0;
+    }
 
     // The old order contains detached operations; rebuild from the final output.
     visited.clear();
@@ -379,11 +463,9 @@ int main() {
     std::cout << "Execution order after rewrite: ";
     for (Operation* op : order) {
         std::cout << op->getName() << " ";
+        op->execute();
     }
     std::cout << "\n";
-    visited.clear();
-    order.clear();
-    getExecutionOrder(downstream.getOutput(), visited, order);
     std::cout << "Downstream uses fused output: "
               << (downstream.getInputs()[0] == fused->getOutput()) << "\n";
     std::cout << "Old ReLU output consumers: "
@@ -398,4 +480,6 @@ int main() {
     std::cout << "\nOutputs match: "
               << (fused->getOutput()->getData() == relu.getOutput()->getData())
               << "\n";
+
+
 }
