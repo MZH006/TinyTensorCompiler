@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <memory>
 #include <functional>
+#include <utility>
 
 class Operation;
 
@@ -429,6 +430,28 @@ std::unique_ptr<Operation> applyPattern(
     order.insert(position, replacement.get());
 
     return replacement;
+}
+
+void optimize(std::vector<Operation*>& order, const std::vector<FusionPattern>& patterns, std::vector<std::unique_ptr<Operation>>& replacements) {
+
+    std::size_t i = 0;
+    while (i < order.size()) {
+        bool matched = false;
+
+        for (const FusionPattern& pattern : patterns) {
+            auto replacement = applyPattern(pattern, order, i);
+
+            if (replacement) {
+                replacements.push_back(std::move(replacement));
+                matched = true;
+                break;
+            }
+        }
+
+        if (!matched) {
+            i++;
+        }
+    }
 }
 
 int main() {
