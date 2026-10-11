@@ -414,8 +414,21 @@ std::unique_ptr<Operation> applyPattern(
         matched.push_back(order[i + j]);
     }
 
-    // Temporary: building and rewriting will be added next.
-    return nullptr;
+    auto replacement = pattern.build(matched);
+
+    redirectConsumers(matched.back()->getOutput(), replacement->getOutput());
+
+    for (Operation *op: matched) {
+        op->disconnectInputs();
+    }
+
+    auto first = order.begin() + i;
+    auto last = first + matched.size();
+
+    auto position = order.erase(first, last);
+    order.insert(position, replacement.get());
+
+    return replacement;
 }
 
 int main() {
@@ -450,7 +463,7 @@ int main() {
         std::cout << "\n";
     }
 
-    auto fused = fuseAddReLU(&add, &relu);
+    auto fused = applyPattern(pattern, order, 1);
     if (!fused) {
         std::cout << "No fusion match\n";
         return 0;
