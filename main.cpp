@@ -180,24 +180,64 @@ class Add : public Operation {
         }   
 };
 
+class MatMul : public Operation {
+    public:
+        MatMul(Tensor* a, Tensor* b)
+            : Operation("MatMul", {a, b}, checkedShape(a,b)) {
+        }
 
+        void execute() override {
+            const std::vector<float>& a = getInputs()[0]->getData();
+            const std::vector<float>& b = getInputs()[1]->getData();
+            const std::vector<std::size_t>& a_shape = getInputs()[0]->getShape();
+            const std::vector<std::size_t>& b_shape = getInputs()[1]->getShape();
+
+            const std::size_t M = a_shape[0];
+            const std::size_t K = a_shape[1];
+            const std::size_t N = b_shape[1];
+            std::vector<float> result(M * N, 0.0f);
+
+            for (std::size_t i = 0; i < M; i++) {
+                for (std::size_t j = 0; j < N; j++) {
+                    float sum = 0.0f;
+                    for (std::size_t k = 0; k < K; k++) {
+                        sum += a[i * K + k] * b[k * N + j];
+                    }
+                    result[i * N + j] = sum;
+                }
+            }
+            getOutput()->setData(result);
+        }
+
+    private:
+        static std::vector<std::size_t> checkedShape(Tensor* a, Tensor* b) {
+            if  (a->getShape().size() != 2 || b->getShape().size() != 2){
+                throw std::invalid_argument("MatMul requires two-dimensional inputs");
+            }
+            if (a->getShape()[1] != b->getShape()[0]) {
+                throw std::invalid_argument("Matrix Dimensions do not match");
+            }
+            return {a->getShape()[0], b->getShape()[1]};
+        }   
+    
+};
 
 
 
 class ReLU : public Operation {
-public:
-    ReLU(Tensor* input)
-        : Operation("ReLU", {input}, input->getShape()) {
-    }
-
-    void execute() override {
-        const std::vector<float>& input = getInputs()[0]->getData();
-        std::vector<float> result(input.size());
-        for (std::size_t i = 0; i < input.size(); i++) {
-            result[i] = input[i] < 0.0f ? 0.0f : input[i];
+    public:
+        ReLU(Tensor* input)
+            : Operation("ReLU", {input}, input->getShape()) {
         }
-        getOutput()->setData(result);
-    }
+
+        void execute() override {
+            const std::vector<float>& input = getInputs()[0]->getData();
+            std::vector<float> result(input.size());
+            for (std::size_t i = 0; i < input.size(); i++) {
+                result[i] = input[i] < 0.0f ? 0.0f : input[i];
+            }
+            getOutput()->setData(result);
+        }
 };
 
 void getExecutionOrder(
@@ -222,8 +262,11 @@ void getExecutionOrder(
 
 int main() {
     Tensor x("x", {1.0f, 2.0f}, {1, 2});
-    Tensor y("y", {-3.0f, 3.0f}, {1, 2});
-    Add add(&x, &y);
+    Tensor weights("weights", {3.0f, 4.0f, 5.0f, 6.0f}, {2, 2});
+    Tensor bias("bias", {1.0f, -20.0f}, {1, 2});
+
+    MatMul matmul(&x, &weights);
+    Add add(matmul.getOutput(), &bias);
     ReLU relu(add.getOutput());
 
     std::unordered_set<Operation*> visited;
@@ -231,17 +274,11 @@ int main() {
     getExecutionOrder(relu.getOutput(), visited, order);
 
     for (Operation* op : order) {
-        std::cout << "Executing " << op->getName() << "\n";
         op->execute();
+        std::cout << op->getName() << " output: ";
+        for (float value : op->getOutput()->getData()) {
+            std::cout << value << " ";
+        }
+        std::cout << "\n";
     }
-
-    std::cout << "Add output: ";
-    for (float value : add.getOutput()->getData()) {
-        std::cout << value << " ";
-    }
-    std::cout << "\nReLU output: ";
-    for (float value : relu.getOutput()->getData()) {
-        std::cout << value << " ";
-    }
-    std::cout << "\n";
 }
