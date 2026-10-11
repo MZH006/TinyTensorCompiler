@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <optional>
 #include <unordered_set>
+#include <algorithm>
+#include <memory>
 
 class Operation;
 
@@ -96,6 +98,17 @@ class Tensor {
             return producer;
         }
 
+        const std::vector<Operation*>& getConsumers() const {
+            return consumers;
+        }
+
+        void removeConsumer(Operation* consumer) {
+            std::vector<Operation*>::iterator it = std::find(consumers.begin(), consumers.end(), consumer);
+            if (it != consumers.end()) {
+                consumers.erase(it);
+            }
+        }
+
     private:
         std::string name;
         std::optional<std::vector<float>> data;
@@ -141,6 +154,19 @@ class Operation{
             return inputs;
         }
 
+        void replaceInput(Tensor* old_input, Tensor* new_input) {
+            for (std::size_t i = 0; i < inputs.size(); i++) { 
+                if (new_input == old_input) {
+                    return;
+                }
+                if (inputs[i] == old_input) {
+                    new_input->addConsumer(this);
+                    old_input->removeConsumer(this);
+                    inputs[i] = new_input; 
+                }
+            }
+        }
+
         virtual void execute() = 0;
         virtual ~Operation() = default;
     
@@ -150,7 +176,17 @@ class Operation{
             Tensor output;
 };
 
+bool matchesAddReLU(Operation* first, Operation* second) {
+    if (first->getName() == "Add" && second->getName() == "ReLU" && second->getInputs().size() == 1) {
+        if (first->getOutput() == second->getInputs()[0]) {
+            if (first->getOutput()->getConsumers().size() == 1 && first->getOutput()->getConsumers()[0] == second) {
+                return true;
+            }
+        }
+    }
 
+    return false;
+}
 
 
 class Add : public Operation {
@@ -240,6 +276,32 @@ class ReLU : public Operation {
         }
 };
 
+class FusedAddReLU : public Operation {
+public:
+    FusedAddReLU(Tensor* a, Tensor* b)
+        : Operation("FusedAddReLU", {a, b}, checkedShape(a, b)) {
+    }
+
+    void execute() override {
+        const std::vector<float>& a = getInputs()[0]->getData();
+        const std::vector<float>& b = getInputs()[1]->getData();
+        std::vector<float> result(a.size());
+        for (std::size_t i = 0; i < a.size(); i++) {
+            const float sum = a[i] + b[i];
+            result[i] = sum < 0.0f ? 0.0f : sum;
+        }
+        getOutput()->setData(result);
+    }
+
+private:
+    static std::vector<std::size_t> checkedShape(Tensor* a, Tensor* b) {
+        if (a->getShape() != b->getShape()) {
+            throw std::invalid_argument("Shape of inputs do not match");
+        }
+        return a->getShape();
+    }
+};
+
 void getExecutionOrder(
     Tensor* tensor,
     std::unordered_set<Operation*>& visited,
@@ -268,6 +330,7 @@ int main() {
     MatMul matmul(&x, &weights);
     Add add(matmul.getOutput(), &bias);
     ReLU relu(add.getOutput());
+    std::cout << "Matches: " << matchesAddReLU(&add, &relu) << "\n";
 
     std::unordered_set<Operation*> visited;
     std::vector<Operation*> order;
@@ -281,4 +344,17 @@ int main() {
         }
         std::cout << "\n";
     }
+
+    // This unique_ptr owns the replacement operation until main() ends.
+    auto fused = std::make_unique<FusedAddReLU>(
+        matmul.getOutput(), &bias);
+    fused->execute();
+
+    std::cout << "FusedAddReLU output: ";
+    for (float value : fused->getOutput()->getData()) {
+        std::cout << value << " ";
+    }
+    std::cout << "\nOutputs match: "
+              << (fused->getOutput()->getData() == relu.getOutput()->getData())
+              << "\n";
 }
