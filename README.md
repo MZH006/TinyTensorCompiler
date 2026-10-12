@@ -1,0 +1,93 @@
+# TinyTensorCompiler
+
+[![Linux CI](https://github.com/MZH006/TinyTensorCompiler/actions/workflows/ci.yml/badge.svg)](https://github.com/MZH006/TinyTensorCompiler/actions/workflows/ci.yml)
+
+An educational C++17 tensor graph compiler and CPU interpreter. It represents computations as an intermediate representation (IR), finds dependency order, and rewrites eligible operation chains into fused operations while preserving numerical results and graph connections.
+
+Built incrementally after a Python computational-graph prototype to explore compiler transformations, C++ ownership, and ML execution. The current backend executes handwritten CPU loops; code generation and accelerator lowering are future work.
+
+## Run it
+
+Requires a C++17-capable Clang installation and Make. No external numerical libraries are required.
+
+```sh
+git clone https://github.com/MZH006/TinyTensorCompiler.git
+cd TinyTensorCompiler
+make run
+make test
+make test-ubsan
+make test-asan  # Requires a working AddressSanitizer runtime; exercised by Linux CI.
+make benchmark
+```
+
+The repository currently requires GitHub access while private. See [BUILDING.md](BUILDING.md) for build details and file organization.
+
+The example prints:
+
+```text
+Original order: MatMul Add ReLU
+Optimized order: FusedLinearReLU
+Original result: 14 0
+Optimized result: 14 0
+Outputs match: 1
+```
+
+## How it works
+
+- **Tensor:** name, shape, optional float data, producer, and consumer registrations. Data is flat and row-major. Outputs can exist before numerical execution.
+- **Operation:** input tensor pointers, an owned output tensor, and a virtual `execute()` method. Concrete operations implement Add, MatMul, ReLU, and fused computations.
+- **Graph:** owns operations through `std::unique_ptr`, records one final output, and executes reachable operations in dependency order. Input tensors are caller-owned and must outlive the graph.
+- **Optimizer:** matches contiguous chains in a topological order, invokes a pattern-specific builder, redirects consumers, updates the final graph output, disconnects old inputs, and substitutes the execution-order entries.
+
+Graph connections are non-owning pointers. Each input use has a corresponding consumer registration; `Add(x, x)` registers two uses. DFS visits each operation once, placing dependencies before their consumers.
+
+```mermaid
+flowchart LR
+    X[x] --> MM[MatMul]
+    W[weights] --> MM
+    MM --> A[Add]
+    B[bias] --> A
+    A --> R[ReLU]
+    R --> O[Graph output]
+```
+
+Two patterns share the same optimizer:
+
+| Pattern | Replacement |
+| --- | --- |
+| `Add → ReLU` | `FusedAddReLU` |
+| `MatMul → Add → ReLU` | `FusedLinearReLU` |
+
+The example registers the longer rule first. Names, actual tensor connections, and intermediate consumer counts must agree. Each intermediate output must have exactly one consumer; the final matched output may have multiple users, all redirected during rewriting. This prevents removing shared intermediates. The linear builder handles either Add operand order.
+
+Add requires equal shapes. MatMul supports two-dimensional matrices with matching inner dimensions. Bias currently has the full matrix-output shape; broadcasting is not implemented.
+
+## Correctness and CI
+
+`make test` runs 16 named test groups, including 32 seeded numerical cases compared with a double-precision reference using absolute and relative tolerances. Coverage includes final-output fusion, rectangular matrices, branch safety, repeated inputs, downstream rewiring, invalid shapes, missing data, matcher boundaries, multiple matches, repeated optimization, changed inputs, zero-sized dimensions, and pointer stability as ownership storage grows.
+
+Linux CI builds on Ubuntu 24.04 and runs the tests, UndefinedBehaviorSanitizer, AddressSanitizer with leak detection, and the example. Sanitizer targets compile separate executables. Tests require assertions and reject `NDEBUG` builds. The workflow and its latest result are linked above. Local macOS AddressSanitizer previously failed during runtime initialization; use the Linux run to check that configuration.
+
+## Benchmark
+
+`make benchmark` compiles all benchmark sources with `-O3`. Separate fused and unfused graphs share identical seeded inputs. The fused graph is optimized before its first execution. Shapes and output equivalence are checked before timing.
+
+Each graph is warmed up, then measured in 21 batches of 50 executions. Measurement order alternates between graphs. The reported time is the median batch-average microseconds per execution. Construction and optimization are excluded; DFS traversal, temporary allocations, output copying, and numerical loops are included.
+
+One local run on macOS arm64 with Apple Clang 15.0.0, recorded October 11, 2026:
+
+| M × K × N | Unfused µs | Fused µs | Unfused / fused | Intermediate tensor bytes avoided |
+| --- | ---: | ---: | ---: | ---: |
+| 8 × 16 × 8 | 2.896 | 2.079 | 1.393× | 512 |
+| 32 × 64 × 32 | 35.337 | 34.011 | 1.039× | 8,192 |
+| 64 × 128 × 64 | 280.151 | 280.413 | 0.999× | 32,768 |
+
+These are illustrative results from one run, not portable performance guarantees. Timings vary between runs; larger cases have been close to parity. This implementation retains the same naive matrix-multiplication algorithm, so graph fusion does not establish an optimized matrix kernel.
+
+Bytes avoided are calculated as `2 * M * N * sizeof(float)`: the MatMul and Add intermediate tensor payloads eliminated from execution. This is not measured process memory, peak allocation, or memory traffic. Detached operations remain owned until Graph destruction; data from execution before optimization can remain allocated. Benchmarks avoid that case by optimizing before first execution.
+
+## Current boundaries and next steps
+
+The supported model is a valid DAG with finite float data and one graph output. Matching depends on adjacency in a particular topological order. There is no cycle detection, dimension-product overflow protection, general tensor broadcasting, allocation-failure recovery, or reclamation of detached operations. Custom rewrite builders are expected to return valid replacements and terminating rules.
+
+Next steps are a PyTorch numerical comparison/import path, memory planning and buffer reuse, and MLIR lowering. PyTorch import, MLIR integration, device execution, and Tenstorrent hardware support are not implemented yet.
