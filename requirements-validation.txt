@@ -1,0 +1,2 @@
+# Optional numerical validation dependency; not needed for the C++ build.
+torch==2.9.1

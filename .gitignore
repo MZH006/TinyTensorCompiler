@@ -9,3 +9,6 @@
 /benchmark-bin
 
 /tests-asan
+
+/linear-runner
+__pycache__/

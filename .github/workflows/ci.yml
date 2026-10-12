@@ -40,3 +40,31 @@ jobs:
 
       - name: Run example
         run: make run
+
+  pytorch-validation:
+    name: PyTorch numerical validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-validation.txt
+
+      - name: Install C++ build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang make
+
+      - name: Install CPU PyTorch
+        run: python -m pip install -r requirements-validation.txt --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Compare C++ execution with PyTorch
+        run: make test-pytorch PYTHON=python

@@ -9,6 +9,7 @@ make test  # Build and run correctness tests.
 make test-ubsan # Run tests with UndefinedBehaviorSanitizer.
 make test-asan  # Run tests with AddressSanitizer (Linux recommended).
 make benchmark # Run the optimized fused/unfused benchmark.
+make test-pytorch # Optional: requires Python with PyTorch installed.
 make clean # Remove the executable and generated build files.
 ```
 
@@ -57,3 +58,11 @@ Intermediate tensor payload bytes avoided are calculated as `2 * M * N * sizeof(
 Run `make test-asan` on a system with a working AddressSanitizer runtime. CI enables leak detection for this target. Local macOS AddressSanitizer initialization previously failed. Check the repository’s Actions tab for the Linux result; its runtime is independent of the local macOS runtime.
 
 Benchmarks are intentionally manual because shared-runner timings are unsuitable for performance thresholds. Workflow changes must be committed and pushed before GitHub can run them.
+
+## Optional PyTorch validation
+
+Use Python 3.12 with `python3 -m pip install -r requirements-validation.txt`, then run `make test-pytorch`. If PyTorch is already installed, the Make target uses that environment without installing anything. To select another interpreter, use `make test-pytorch PYTHON=/path/to/python`.
+
+The target builds `linear-runner` from `linear_runner.cpp` and the shared compiler objects, then runs `scripts/validate_pytorch.py`. `make clean` removes its executable/object/dependency files. The validation dependency is optional and does not affect `make`, the example, or C++ correctness/sanitizer tests. The [README](README.md#pytorch-numerical-validation) documents the text-input/JSON-output protocol and comparison tolerances.
+
+The `pytorch-validation` CI job runs independently of the existing build/sanitizer job. It selects Python 3.12, caches pip downloads using `requirements-validation.txt`, installs pinned PyTorch 2.9.1 from the official CPU wheel index, and runs `make test-pytorch PYTHON=python`. This job's first successful GitHub execution must be verified after committing and pushing the workflow changes.

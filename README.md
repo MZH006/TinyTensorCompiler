@@ -68,6 +68,41 @@ Add requires equal shapes. MatMul supports two-dimensional matrices with matchin
 
 Linux CI builds on Ubuntu 24.04 and runs the tests, UndefinedBehaviorSanitizer, AddressSanitizer with leak detection, and the example. Sanitizer targets compile separate executables. Tests require assertions and reject `NDEBUG` builds. The workflow and its latest result are linked above. Local macOS AddressSanitizer previously failed during runtime initialization; use the Linux run to check that configuration.
 
+## PyTorch numerical validation
+
+An optional Python validator compares the fixed computation `ReLU(x @ weights + bias)` against CPU float32 PyTorch. A C++ command-line runner builds the graph and executes either the original operations or the fused replacement. It accepts numerical inputs; it does not import arbitrary PyTorch graphs.
+
+With Python 3.12 and PyTorch available:
+
+```sh
+python3 -m pip install -r requirements-validation.txt
+make test-pytorch
+```
+
+Linux CPU-only installation can use `--index-url https://download.pytorch.org/whl/cpu`; see the [official PyTorch installation commands](https://pytorch.org/get-started/previous-versions/#v291). The dependency file pins PyTorch 2.9.1, which was used for local validation. Core builds and C++ tests do not require Python or PyTorch.
+
+The validator runs 34 input cases in both modes, giving 68 comparisons against PyTorch, plus seven invalid-request checks. Cases include the original example, zero activations, eight matrix shapes, seeded random data, and reversed Add operands. It verifies the output shape, element count, and operation count (three unfused, one fused), then compares values with `rtol=1e-4` and `atol=1e-5`. Each subprocess has a 30-second timeout. A separate Linux CI job runs this validation with Python 3.12 and CPU PyTorch.
+
+The runner's standard input contains `M K N`, followed by row-major x, weight, and bias values. Dimensions must be in `[1, 256]`; bias has shape `[M,N]`. For example:
+
+```sh
+make linear-runner
+./linear-runner --fused <<'EOF'
+1 2 2
+1 2
+3 4 5 6
+1 -20
+EOF
+```
+
+Successful standard output is JSON:
+
+```json
+{"shape":[1,2],"operation_count":1,"data":[14,0]}
+```
+
+Use `--unfused` to execute three operations or append `--reverse-add` to swap Add's inputs. Errors go to standard error with exit status 1. The runner rejects malformed/truncated input, nonfinite values, out-of-range dimensions, and trailing tokens.
+
 ## Benchmark
 
 `make benchmark` compiles all benchmark sources with `-O3`. Separate fused and unfused graphs share identical seeded inputs. The fused graph is optimized before its first execution. Shapes and output equivalence are checked before timing.
@@ -90,4 +125,4 @@ Bytes avoided are calculated as `2 * M * N * sizeof(float)`: the MatMul and Add 
 
 The supported model is a valid DAG with finite float data and one graph output. Matching depends on adjacency in a particular topological order. There is no cycle detection, dimension-product overflow protection, general tensor broadcasting, allocation-failure recovery, or reclamation of detached operations. Custom rewrite builders are expected to return valid replacements and terminating rules.
 
-Next steps are a PyTorch numerical comparison/import path, memory planning and buffer reuse, and MLIR lowering. PyTorch import, MLIR integration, device execution, and Tenstorrent hardware support are not implemented yet.
+Next steps are PyTorch graph import, memory planning and buffer reuse, and MLIR lowering. PyTorch import, MLIR integration, device execution, and Tenstorrent hardware support are not implemented yet.

@@ -1,4 +1,5 @@
 CXX := clang++
+PYTHON ?= python3
 CXXFLAGS := -std=c++17 -Wall -Wextra
 
 TARGET := main
@@ -7,9 +8,9 @@ CORE_OBJECTS := $(CORE_SOURCES:.cpp=.o)
 OBJECTS := main.o $(CORE_OBJECTS)
 TEST_TARGET := tests
 TEST_OBJECTS := tests.o $(CORE_OBJECTS)
-DEPS := $(sort $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d))
+DEPS := $(sort $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d) linear_runner.d)
 
-.PHONY: all run test test-ubsan test-asan benchmark clean
+.PHONY: all run test test-ubsan test-asan test-pytorch benchmark clean
 
 all: $(TARGET)
 
@@ -28,6 +29,12 @@ $(TEST_TARGET): $(TEST_OBJECTS)
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
 	@echo "All tests passed."
+
+linear-runner: linear_runner.o $(CORE_OBJECTS)
+	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+test-pytorch: linear-runner
+	$(PYTHON) scripts/validate_pytorch.py --runner ./linear-runner
 
 # Build separately so sanitizer flags cannot mix with normal object files.
 tests-ubsan: tests.cpp $(CORE_SOURCES) $(wildcard *.h) Makefile
@@ -51,6 +58,6 @@ benchmark: benchmark-bin
 	./benchmark-bin
 
 clean:
-	rm -f $(TARGET) $(TEST_TARGET) tests-ubsan tests-asan benchmark-bin $(OBJECTS) tests.o $(DEPS)
+	rm -f $(TARGET) $(TEST_TARGET) tests-ubsan tests-asan benchmark-bin linear-runner linear_runner.o $(OBJECTS) tests.o $(DEPS)
 
 -include $(DEPS)
