@@ -2,7 +2,7 @@ CXX := clang++
 CXXFLAGS := -std=c++17 -Wall -Wextra
 
 TARGET := main
-SOURCES := main.cpp Tensor.cpp Operation.cpp Ops.cpp Optimizer.cpp
+SOURCES := main.cpp Tensor.cpp Operation.cpp Ops.cpp Optimizer.cpp Graph.cpp
 OBJECTS := $(SOURCES:.cpp=.o)
 DEPS := $(OBJECTS:.o=.d)
 
