@@ -9,7 +9,7 @@ TEST_TARGET := tests
 TEST_OBJECTS := tests.o $(CORE_OBJECTS)
 DEPS := $(sort $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d))
 
-.PHONY: all run test clean
+.PHONY: all run test test-ubsan clean
 
 all: $(TARGET)
 
@@ -29,7 +29,14 @@ test: $(TEST_TARGET)
 	./$(TEST_TARGET)
 	@echo "All tests passed."
 
+# Build separately so sanitizer flags cannot mix with normal object files.
+tests-ubsan: tests.cpp $(CORE_SOURCES) $(wildcard *.h) Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -g -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer tests.cpp $(CORE_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
+
+test-ubsan: tests-ubsan
+	./tests-ubsan
+
 clean:
-	rm -f $(TARGET) $(TEST_TARGET) $(OBJECTS) tests.o $(DEPS)
+	rm -f $(TARGET) $(TEST_TARGET) tests-ubsan $(OBJECTS) tests.o $(DEPS)
 
 -include $(DEPS)
