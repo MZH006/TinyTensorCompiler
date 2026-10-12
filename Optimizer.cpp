@@ -1,4 +1,5 @@
 #include "Optimizer.h"
+#include "Graph.h"
 #include "Ops.h"
 
 #include <algorithm>
@@ -79,6 +80,7 @@ void redirectConsumers(Tensor* old_output, Tensor* new_output) {
 }
 
 std::unique_ptr<Operation> applyPattern(
+    Graph& graph,
     const FusionPattern& pattern,
     std::vector<Operation*>& order,
     std::size_t i) {
@@ -93,7 +95,9 @@ std::unique_ptr<Operation> applyPattern(
 
     auto replacement = pattern.build(matched);
 
-    redirectConsumers(matched.back()->getOutput(), replacement->getOutput());
+    Tensor* old_output = matched.back()->getOutput();
+    redirectConsumers(old_output, replacement->getOutput());
+    graph.replaceOutput(old_output, replacement->getOutput());
 
     for (Operation *op: matched) {
         op->disconnectInputs();
@@ -108,17 +112,18 @@ std::unique_ptr<Operation> applyPattern(
     return replacement;
 }
 
-void optimize(std::vector<Operation*>& order, const std::vector<FusionPattern>& patterns, std::vector<std::unique_ptr<Operation>>& replacements) {
+void optimize(Graph& graph, const std::vector<FusionPattern>& patterns) {
+    std::vector<Operation*> order = graph.getExecutionOrder();
 
     std::size_t i = 0;
     while (i < order.size()) {
         bool matched = false;
 
         for (const FusionPattern& pattern : patterns) {
-            auto replacement = applyPattern(pattern, order, i);
+            auto replacement = applyPattern(graph, pattern, order, i);
 
             if (replacement) {
-                replacements.push_back(std::move(replacement));
+                graph.addOperation(std::move(replacement));
                 matched = true;
                 break;
             }

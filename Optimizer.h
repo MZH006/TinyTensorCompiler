@@ -8,6 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
+class Graph;
+
 struct FusionPattern {
     std::string name;
     std::vector<std::string> chain;
@@ -30,8 +32,9 @@ void getExecutionOrder(
 void redirectConsumers(Tensor* old_output, Tensor* new_output);
 
 std::unique_ptr<Operation> applyPattern(
+    Graph& graph,
     const FusionPattern& pattern,
     std::vector<Operation*>& order,
     std::size_t i);
 
-void optimize(std::vector<Operation*>& order, const std::vector<FusionPattern>& patterns, std::vector<std::unique_ptr<Operation>>& replacements);
+void optimize(Graph& graph, const std::vector<FusionPattern>& patterns);
