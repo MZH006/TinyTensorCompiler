@@ -39,3 +39,7 @@ Graph owns original and fused operations. Input tensors are caller-owned and mus
 `make test-ubsan` builds a separate executable that stops on undefined-behavior reports. AddressSanitizer remains unverified on this machine because its runtime previously failed during initialization.
 
 These tests cover the current valid-DAG, finite-float, single-output API. They do not establish support for cyclic graphs, dimension-product overflow, allocation-failure recovery, arbitrary custom rewrite builders, or accelerator execution.
+
+## Benchmark
+
+Run `make benchmark` to compile all benchmark sources with `-O3` and compare separate unfused/fused graphs. The fused graph is optimized before its first execution. Output correctness and graph structure are checked before timing; construction and optimization are excluded. Each graph receives a warmup followed by 21 measured executions, summarized by the median. Timing includes graph traversal, temporary allocations, and numerical computation. The current tiny input is a timing demonstration, not evidence of a general speedup; larger shapes, batched samples, and alternating measurement order are needed next.

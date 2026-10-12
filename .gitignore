@@ -5,3 +5,5 @@
 /tests
 
 /tests-ubsan
+
+/benchmark-bin

@@ -9,7 +9,7 @@ TEST_TARGET := tests
 TEST_OBJECTS := tests.o $(CORE_OBJECTS)
 DEPS := $(sort $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d))
 
-.PHONY: all run test test-ubsan clean
+.PHONY: all run test test-ubsan benchmark clean
 
 all: $(TARGET)
 
@@ -36,7 +36,14 @@ tests-ubsan: tests.cpp $(CORE_SOURCES) $(wildcard *.h) Makefile
 test-ubsan: tests-ubsan
 	./tests-ubsan
 
+# Compile every source with optimization; do not reuse debug/default objects.
+benchmark-bin: benchmark.cpp $(CORE_SOURCES) $(wildcard *.h) Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -O3 benchmark.cpp $(CORE_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
+
+benchmark: benchmark-bin
+	./benchmark-bin
+
 clean:
-	rm -f $(TARGET) $(TEST_TARGET) tests-ubsan $(OBJECTS) tests.o $(DEPS)
+	rm -f $(TARGET) $(TEST_TARGET) tests-ubsan benchmark-bin $(OBJECTS) tests.o $(DEPS)
 
 -include $(DEPS)
