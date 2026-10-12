@@ -7,3 +7,5 @@
 /tests-ubsan
 
 /benchmark-bin
+
+/tests-asan

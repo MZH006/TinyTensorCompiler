@@ -43,3 +43,11 @@ These tests cover the current valid-DAG, finite-float, single-output API. They d
 ## Benchmark
 
 Run `make benchmark` to compile all benchmark sources with `-O3` and compare separate unfused/fused graphs. The fused graph is optimized before its first execution. Output correctness and graph structure are checked before timing; construction and optimization are excluded. Each graph receives a warmup followed by 21 measured executions, summarized by the median. Timing includes graph traversal, temporary allocations, and numerical computation. The current tiny input is a timing demonstration, not evidence of a general speedup; larger shapes, batched samples, and alternating measurement order are needed next.
+
+## Linux continuous integration
+
+`.github/workflows/ci.yml` runs on pushes, pull requests, and manual dispatch. It installs Clang and Make on Ubuntu 24.04, builds the example, runs correctness tests, runs separate UndefinedBehaviorSanitizer and AddressSanitizer executables, and executes the example. Each failing command fails the job. The job has read-only repository permissions and a ten-minute timeout.
+
+Run `make test-asan` on a system with a working AddressSanitizer runtime. CI enables leak detection for this target. Local macOS AddressSanitizer initialization previously failed; this does not establish whether the Linux job passes. The first GitHub run is needed to verify that environment.
+
+Benchmarks are intentionally manual because shared-runner timings are unsuitable for performance thresholds. Workflow changes must be committed and pushed before GitHub can run them.

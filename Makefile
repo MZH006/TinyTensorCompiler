@@ -9,7 +9,7 @@ TEST_TARGET := tests
 TEST_OBJECTS := tests.o $(CORE_OBJECTS)
 DEPS := $(sort $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d))
 
-.PHONY: all run test test-ubsan benchmark clean
+.PHONY: all run test test-ubsan test-asan benchmark clean
 
 all: $(TARGET)
 
@@ -36,6 +36,13 @@ tests-ubsan: tests.cpp $(CORE_SOURCES) $(wildcard *.h) Makefile
 test-ubsan: tests-ubsan
 	./tests-ubsan
 
+# Linux CI exercises this target; the macOS ASan runtime may fail to initialize.
+tests-asan: tests.cpp $(CORE_SOURCES) $(wildcard *.h) Makefile
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -g -fsanitize=address -fno-omit-frame-pointer tests.cpp $(CORE_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
+
+test-asan: tests-asan
+	./tests-asan
+
 # Compile every source with optimization; do not reuse debug/default objects.
 benchmark-bin: benchmark.cpp $(CORE_SOURCES) $(wildcard *.h) Makefile
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -O3 benchmark.cpp $(CORE_SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
@@ -44,6 +51,6 @@ benchmark: benchmark-bin
 	./benchmark-bin
 
 clean:
-	rm -f $(TARGET) $(TEST_TARGET) tests-ubsan benchmark-bin $(OBJECTS) tests.o $(DEPS)
+	rm -f $(TARGET) $(TEST_TARGET) tests-ubsan tests-asan benchmark-bin $(OBJECTS) tests.o $(DEPS)
 
 -include $(DEPS)
