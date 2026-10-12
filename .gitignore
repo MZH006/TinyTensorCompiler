@@ -11,4 +11,5 @@
 /tests-asan
 
 /linear-runner
+/graph-import
 __pycache__/

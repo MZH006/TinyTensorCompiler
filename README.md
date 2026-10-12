@@ -126,3 +126,9 @@ Bytes avoided are calculated as `2 * M * N * sizeof(float)`: the MatMul and Add 
 The supported model is a valid DAG with finite float data and one graph output. Matching depends on adjacency in a particular topological order. There is no cycle detection, dimension-product overflow protection, general tensor broadcasting, allocation-failure recovery, or reclamation of detached operations. Custom rewrite builders are expected to return valid replacements and terminating rules.
 
 Next steps are PyTorch graph import, memory planning and buffer reuse, and MLIR lowering. PyTorch import, MLIR integration, device execution, and Tenstorrent hardware support are not implemented yet.
+
+## Text graph importer
+
+Build with `make graph-import`, then run `./graph-import example.graph`. The file defines rank-two input tensors, MatMul/Add/ReLU operations, and one output. Tensor declarations use `tensor name rows columns data...`; operations use `matmul out lhs rhs`, `add out lhs rhs`, and `relu out input`, followed by `output name`. Names must be defined before use and cannot be redefined. Blank lines are allowed; comments are not supported.
+
+The importer owns input tensors, validates syntax and shapes, and reports instruction errors with line numbers and exit status 1. It executes before and after fusion, prints operation counts and results, and compares finite values with `atol=1e-5`, `rtol=1e-4`. The example fuses three operations to one and produces `8 0`. `make test-import` checks two valid graphs and 15 invalid files using only Python's standard library. Linux CI includes these checks after the workflow is pushed. `make clean` removes importer build artifacts.

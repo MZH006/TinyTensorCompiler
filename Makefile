@@ -8,9 +8,9 @@ CORE_OBJECTS := $(CORE_SOURCES:.cpp=.o)
 OBJECTS := main.o $(CORE_OBJECTS)
 TEST_TARGET := tests
 TEST_OBJECTS := tests.o $(CORE_OBJECTS)
-DEPS := $(sort $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d) linear_runner.d)
+DEPS := $(sort $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d) linear_runner.d graph_import.d)
 
-.PHONY: all run test test-ubsan test-asan test-pytorch benchmark clean
+.PHONY: all run test test-ubsan test-asan test-pytorch test-import benchmark clean
 
 all: $(TARGET)
 
@@ -32,6 +32,12 @@ test: $(TEST_TARGET)
 
 linear-runner: linear_runner.o $(CORE_OBJECTS)
 	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+graph-import: graph_import.o $(CORE_OBJECTS)
+	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+
+test-import: graph-import
+	$(PYTHON) scripts/test_graph_import.py ./graph-import
 
 test-pytorch: linear-runner
 	$(PYTHON) scripts/validate_pytorch.py --runner ./linear-runner
@@ -58,6 +64,6 @@ benchmark: benchmark-bin
 	./benchmark-bin
 
 clean:
-	rm -f $(TARGET) $(TEST_TARGET) tests-ubsan tests-asan benchmark-bin linear-runner linear_runner.o $(OBJECTS) tests.o $(DEPS)
+	rm -f $(TARGET) $(TEST_TARGET) tests-ubsan tests-asan benchmark-bin linear-runner graph-import linear_runner.o graph_import.o $(OBJECTS) tests.o $(DEPS)
 
 -include $(DEPS)

@@ -1,0 +1,8 @@
+tensor x 1 2 1 2
+tensor weights 2 2 1 2 3 4
+tensor bias 1 2 1 -20
+
+matmul product x weights
+add biased product bias
+relu result biased
+output result

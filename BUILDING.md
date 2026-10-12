@@ -66,3 +66,9 @@ Use Python 3.12 with `python3 -m pip install -r requirements-validation.txt`, th
 The target builds `linear-runner` from `linear_runner.cpp` and the shared compiler objects, then runs `scripts/validate_pytorch.py`. `make clean` removes its executable/object/dependency files. The validation dependency is optional and does not affect `make`, the example, or C++ correctness/sanitizer tests. The [README](README.md#pytorch-numerical-validation) documents the text-input/JSON-output protocol and comparison tolerances.
 
 The `pytorch-validation` CI job runs independently of the existing build/sanitizer job. It selects Python 3.12, caches pip downloads using `requirements-validation.txt`, installs pinned PyTorch 2.9.1 from the official CPU wheel index, and runs `make test-pytorch PYTHON=python`. This job's first successful GitHub execution must be verified after committing and pushing the workflow changes.
+
+## Text graph importer
+
+Build with `make graph-import`, then run `./graph-import example.graph`. The file defines rank-two input tensors, MatMul/Add/ReLU operations, and one output. Tensor declarations use `tensor name rows columns data...`; operations use `matmul out lhs rhs`, `add out lhs rhs`, and `relu out input`, followed by `output name`. Names must be defined before use and cannot be redefined. Blank lines are allowed; comments are not supported.
+
+The importer owns input tensors, validates syntax and shapes, and reports instruction errors with line numbers and exit status 1. It executes before and after fusion, prints operation counts and results, and compares finite values with `atol=1e-5`, `rtol=1e-4`. The example fuses three operations to one and produces `8 0`. `make test-import` checks two valid graphs and 15 invalid files using only Python's standard library. Linux CI includes these checks after the workflow is pushed. `make clean` removes importer build artifacts.

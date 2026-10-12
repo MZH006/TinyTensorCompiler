@@ -30,6 +30,9 @@ jobs:
       - name: Correctness tests
         run: make test
 
+      - name: Graph importer tests
+        run: make test-import
+
       - name: UndefinedBehaviorSanitizer tests
         run: make test-ubsan
 

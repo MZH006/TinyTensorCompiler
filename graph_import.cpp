@@ -1,0 +1,197 @@
+#include "Graph.h"
+#include "Ops.h"
+#include "Optimizer.h"
+
+#include <cmath>
+#include <cstddef>
+#include <fstream>
+#include <iostream>
+#include <iomanip>
+#include <limits>
+#include <memory>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+int main(int argc, char* argv[]) {
+    try {
+        if (argc != 2) {
+            throw std::runtime_error("Usage: graph-import <graph-file>");
+        }
+        std::cout << std::setprecision(std::numeric_limits<float>::max_digits10);
+        // Inputs outlive Graph; moving unique_ptrs preserves tensor addresses.
+        std::vector<std::unique_ptr<Tensor>> tensors;
+        Graph graph;
+
+        std::unordered_map<std::string, Tensor*> values;
+
+        auto lookup = [&](const std::string& name) -> Tensor* {
+            auto it = values.find(name);
+            if (it == values.end()) {
+                throw std::runtime_error("Unknown tensor: " + name);
+            }
+            return it->second;
+        };
+
+        std::ifstream program(argv[1]);
+        if (!program) {
+            throw std::runtime_error("Could not open " + std::string(argv[1]));
+        }
+
+        std::size_t lineNumber = 0;
+        std::string line;
+        while (std::getline(program, line)) {
+            ++lineNumber;
+            try {
+                std::istringstream stream(line);
+                std::string opcode;
+                if (!(stream >> opcode)) {
+                    continue;
+                }
+
+                if (opcode == "tensor") {
+                    std::string name;
+                    long long rows, columns;
+                    if (!(stream >> name >> rows >> columns) || rows <= 0 || columns <= 0) {
+                        throw std::runtime_error("Expected: tensor name positive-rows positive-columns data...");
+                    }
+                    if (values.find(name) != values.end()) {
+                        throw std::runtime_error("Duplicate tensor name: " + name);
+                    }
+                    const auto m = static_cast<std::size_t>(rows);
+                    const auto n = static_cast<std::size_t>(columns);
+                    if (m > std::numeric_limits<std::size_t>::max() / n) {
+                        throw std::runtime_error("Tensor shape is too large");
+                    }
+                    std::vector<float> data;
+                    for (std::size_t i = 0; i < m * n; ++i) {
+                        float value;
+                        if (!(stream >> value) || !std::isfinite(value)) {
+                            throw std::runtime_error("Expected rows * columns finite tensor values");
+                        }
+                        data.push_back(value);
+                    }
+                    std::string extra;
+                    if (stream >> extra) {
+                        throw std::runtime_error("Unexpected extra argument: " + extra);
+                    }
+                    auto tensor = std::make_unique<Tensor>(name, std::move(data),
+                                                          std::vector<std::size_t>{m, n});
+                    values.emplace(name, tensor.get());
+                    tensors.push_back(std::move(tensor));
+                } else if (opcode == "add") {
+                    std::string outputName, lhsName, rhsName;
+                    if (!(stream >> outputName >> lhsName >> rhsName)) {
+                        throw std::runtime_error("Expected: add output lhs rhs");
+                    }
+                    std::string extra;
+                    if (stream >> extra) {
+                        throw std::runtime_error("Unexpected extra argument: " + extra);
+                    }
+                    if (values.find(outputName) != values.end()) {
+                        throw std::runtime_error("Duplicate tensor name: " + outputName);
+                    }
+                    auto* add = graph.addOperation(
+                        std::make_unique<Add>(lookup(lhsName), lookup(rhsName)));
+                    values.emplace(outputName, add->getOutput());
+                } else if (opcode == "matmul") {
+                    std::string outputName, lhsName, rhsName;
+                    if (!(stream >> outputName >> lhsName >> rhsName)) {
+                        throw std::runtime_error("Expected: matmul output lhs rhs");
+                    }
+                    std::string extra;
+                    if (stream >> extra) {
+                        throw std::runtime_error("Unexpected extra argument: " + extra);
+                    }
+                    if (values.find(outputName) != values.end()) {
+                        throw std::runtime_error("Duplicate tensor name: " + outputName);
+                    }
+                    auto* matmul = graph.addOperation(
+                        std::make_unique<MatMul>(lookup(lhsName), lookup(rhsName)));
+                    values.emplace(outputName, matmul->getOutput());
+                } else if (opcode == "relu") {
+                    std::string outputName, inputName;
+                    if (!(stream >> outputName >> inputName)) {
+                        throw std::runtime_error("Expected: relu output input");
+                    }
+                    std::string extra;
+                    if (stream >> extra) {
+                        throw std::runtime_error("Unexpected extra argument: " + extra);
+                    }
+                    if (values.find(outputName) != values.end()) {
+                        throw std::runtime_error("Duplicate tensor name: " + outputName);
+                    }
+                    auto* relu = graph.addOperation(
+                        std::make_unique<ReLU>(lookup(inputName)));
+                    values.emplace(outputName, relu->getOutput());
+                } else if (opcode == "output") {
+                    if (graph.getOutput() != nullptr) {
+                        throw std::runtime_error("Only one output instruction is allowed");
+                    }
+                    std::string outputName;
+                    if (!(stream >> outputName)) {
+                        throw std::runtime_error("Expected: output name");
+                    }
+                    std::string extra;
+                    if (stream >> extra) {
+                        throw std::runtime_error("Unexpected extra argument: " + extra);
+                    }
+                    graph.setOutput(lookup(outputName));
+                } else {
+                    throw std::runtime_error("Unknown opcode: " + opcode);
+                }
+            } catch (const std::exception& error) {
+                throw std::runtime_error(
+                    "Line " + std::to_string(lineNumber) + ": " + error.what());
+            }
+        }
+
+        if (program.bad()) {
+            throw std::runtime_error("Failed to read graph file");
+        }
+        if (graph.getOutput() == nullptr) {
+            throw std::runtime_error("Missing output instruction");
+        }
+        const auto originalCount = graph.getExecutionOrder().size();
+        graph.execute();
+        const std::vector<float> original = graph.getOutput()->getData();
+
+        const std::vector<FusionPattern> patterns{
+            {"linear_relu", {"MatMul", "Add", "ReLU"}, buildLinearReLUPattern},
+            {"add_relu", {"Add", "ReLU"}, buildAddReLUPattern}
+        };
+        optimize(graph, patterns);
+        graph.execute();
+        const auto& optimized = graph.getOutput()->getData();
+
+        std::cout << "Operations: " << originalCount << " -> "
+                  << graph.getExecutionOrder().size() << "\n";
+        std::cout << "Optimized order: ";
+        for (Operation* op : graph.getExecutionOrder()) {
+            std::cout << op->getName() << " ";
+        }
+        std::cout << "\nOriginal result: ";
+        for (float value : original) {
+            std::cout << value << " ";
+        }
+        std::cout << "\nOptimized result: ";
+        for (float value : optimized) {
+            std::cout << value << " ";
+        }
+
+        bool matches = original.size() == optimized.size();
+        for (std::size_t i = 0; matches && i < original.size(); ++i) {
+            matches = std::isfinite(original[i]) && std::isfinite(optimized[i])
+                && std::fabs(original[i] - optimized[i])
+                    <= 1e-5f + 1e-4f * std::fabs(original[i]);
+        }
+        std::cout << "\nOutputs match: " << std::boolalpha << matches << "\n";
+        return matches ? 0 : 1;
+    } catch (const std::exception& error) {
+        std::cerr << "Error: " << error.what() << "\n";
+        return 1;
+    }
+}
