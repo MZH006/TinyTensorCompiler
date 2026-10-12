@@ -5,6 +5,7 @@ From this directory, use the Makefile:
 ```sh
 make       # Build, recompiling only what changed.
 make run   # Build if needed, then run.
+make test  # Build and run correctness tests.
 make clean # Remove the executable and generated build files.
 ```
 
