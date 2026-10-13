@@ -9,8 +9,11 @@ make test  # Build and run correctness tests.
 make test-ubsan # Run tests with UndefinedBehaviorSanitizer.
 make test-asan  # Run tests with AddressSanitizer (Linux recommended).
 make benchmark # Run the optimized fused/unfused benchmark.
+make test-import  # Requires Python; no PyTorch needed.
 make test-pytorch # Optional: requires Python with PyTorch installed.
-make clean # Remove the executable and generated build files.
+make test-fx      # Validate reusable FX models against PyTorch.
+make test-codegen # Generate, compile, and validate standalone C++ with PyTorch.
+make clean # Remove executables, object files, and dependency files.
 ```
 
 The Makefile tracks header dependencies automatically using generated `.d` files.
@@ -18,17 +21,22 @@ The Makefile tracks header dependencies automatically using generated `.d` files
 To build manually:
 
 ```sh
-clang++ -std=c++17 -Wall -Wextra main.cpp Tensor.cpp Operation.cpp Ops.cpp Optimizer.cpp Graph.cpp -o main
+clang++ -std=c++17 -Wall -Wextra main.cpp Tensor.cpp Operation.cpp Ops.cpp Optimizer.cpp Graph.cpp Codegen.cpp -o main
 ./main
 ```
 
-Compile all six source files together. Headers declare interfaces; source files define their implementations.
+This command compiles the example and six core source files together. Do not compile every `.cpp` into one executable: several files contain separate `main()` entry points. Headers declare interfaces; source files define their implementations.
 
 - `Tensor.h` / `Tensor.cpp`: numerical storage, shape validation, and graph links.
 - `Operation.h` / `Operation.cpp`: base operation and connection updates.
 - `Ops.h` / `Ops.cpp`: Add, MatMul, ReLU, and fused operations.
 - `Optimizer.h` / `Optimizer.cpp`: traversal, fusion patterns, builders, and rewriting.
-- `Graph.h` / `Graph.cpp`: operation ownership, final output tracking, and execution.
+- `Graph.h` / `Graph.cpp`: operation ownership, final output tracking, cached execution plans, and execution.
+- `Topology.h`: shared structural revision counter for conservative plan invalidation.
+- `Codegen.h` / `Codegen.cpp`: standalone C++ generation for a supported fused linear/ReLU graph.
+- `graph_import.cpp`: text model parsing, runtime data loading, and code-generation CLI.
+- `linear_runner.cpp`: fixed-computation numerical validation CLI.
+- `tests.cpp` / `benchmark.cpp`: separate correctness-test and benchmark programs.
 - `main.cpp`: construct, execute, optimize, and compare the example.
 
 Headers use `#pragma once` to prevent repeated definitions within a compilation unit. Definitions such as `Tensor::print()` in a source file implement methods declared in the corresponding header.
@@ -37,23 +45,23 @@ Graph owns original and fused operations. Input tensors are caller-owned and mus
 
 ## Correctness tests
 
-`make test` runs 16 named test groups, including 32 deterministic numerical cases against a double-precision reference. Coverage includes both fusion rules, final-output replacement, branches, repeated inputs, downstream rewiring, invalid shapes, missing data, matcher bounds, repeated optimization, input updates, zero-sized dimensions, and ownership/address stability. Numerical comparisons use absolute and relative tolerances. Assertions are required; the tests reject builds with `NDEBUG`.
+`make test` runs 19 named test groups, including 32 deterministic numerical cases against a double-precision reference. Coverage includes both fusion rules, final-output replacement, branches, repeated inputs, downstream rewiring, invalid shapes, missing data, matcher bounds, repeated optimization, input updates, zero-sized dimensions, ownership/address stability, execution-plan invalidation, and output-buffer reuse across changed inputs. Numerical comparisons use absolute and relative tolerances. Assertions are required; the tests reject builds with `NDEBUG`.
 
 `make test-ubsan` builds a separate executable that stops on undefined-behavior reports. AddressSanitizer remains unverified on this machine because its runtime previously failed during initialization.
 
-These tests cover the current valid-DAG, finite-float, single-output API. They do not establish support for cyclic graphs, dimension-product overflow, allocation-failure recovery, arbitrary custom rewrite builders, or accelerator execution.
+These tests cover the current valid-DAG, finite-float, single-output API. They do not establish support for cyclic graphs, comprehensive dimension-product overflow handling, allocation-failure recovery, arbitrary custom rewrite builders, or accelerator execution. Declaration parsing, writable-storage allocation, and code generation include overflow guards; general Tensor constructors and `setData()` do not.
 
 ## Benchmark
 
 Run `make benchmark` to compile every benchmark source with `-O3`, separately from normal build objects. Three matrix cases are measured: `(M,K,N) = (8,16,8), (32,64,32), (64,128,64)`. Input data is generated with seed 42 and shared between distinct fused/unfused graphs. The fused graph is optimized before its first execution. Graph structure and output equivalence are checked before timing.
 
-Each graph receives a warmup. The benchmark then collects 21 samples of 50 executions per graph, alternating which graph is measured first. Each sample is divided by 50; the median of those batch averages is reported in microseconds per execution. Construction and optimization are excluded. Traversal, temporary allocations, output copying, and numerical execution remain included. No printing occurs inside the measurement loop.
+Each graph receives a warmup. The benchmark then collects 21 samples of 50 executions per graph, alternating which graph is measured first. Each sample is divided by 50; the median of those batch averages is reported in microseconds per execution. Construction and optimization are excluded. After warmup, the cached execution order and per-operation output buffers are reused. Timed work includes plan-validity checks, virtual calls, and numerical execution; it excludes first-use allocation and plan construction. No printing occurs inside the measurement loop.
 
 Intermediate tensor payload bytes avoided are calculated as `2 * M * N * sizeof(float)`. This represents the two eliminated matrix outputs, not process memory, peak allocation, or measured memory traffic. Detached nodes remain owned; optimizing before their first execution prevents them from accumulating old numerical data. See [README.md](README.md) for an illustrative run and interpretation. Shared CI runners are not used for speed thresholds.
 
 ## Linux continuous integration
 
-`.github/workflows/ci.yml` runs on pushes, pull requests, and manual dispatch. It installs Clang and Make on Ubuntu 24.04, builds the example, runs correctness tests, runs separate UndefinedBehaviorSanitizer and AddressSanitizer executables, and executes the example. Each failing command fails the job. The job has read-only repository permissions and a ten-minute timeout.
+`.github/workflows/ci.yml` runs on pushes, pull requests, and manual dispatch. It installs Clang and Make on Ubuntu 24.04, builds the example, runs correctness tests, runs separate UndefinedBehaviorSanitizer and AddressSanitizer executables, runs importer checks, and executes the example. Each failing command fails the job. The job has read-only repository permissions and a ten-minute timeout.
 
 Run `make test-asan` on a system with a working AddressSanitizer runtime. CI enables leak detection for this target. Local macOS AddressSanitizer initialization previously failed. Check the repository’s Actions tab for the Linux result; its runtime is independent of the local macOS runtime.
 
@@ -65,7 +73,7 @@ Use Python 3.12 with `python3 -m pip install -r requirements-validation.txt`, th
 
 The target builds `linear-runner` from `linear_runner.cpp` and the shared compiler objects, then runs `scripts/validate_pytorch.py`. `make clean` removes its executable/object/dependency files. The validation dependency is optional and does not affect `make`, the example, or C++ correctness/sanitizer tests. The [README](README.md#pytorch-numerical-validation) documents the text-input/JSON-output protocol and comparison tolerances.
 
-The `pytorch-validation` CI job runs independently of the existing build/sanitizer job. It selects Python 3.12, caches pip downloads using `requirements-validation.txt`, installs pinned PyTorch 2.9.1 from the official CPU wheel index, and runs `make test-pytorch PYTHON=python`. This job's first successful GitHub execution must be verified after committing and pushing the workflow changes.
+The `pytorch-validation` CI job runs independently of the existing build/sanitizer job. It selects Python 3.12, caches pip downloads using `requirements-validation.txt`, installs pinned PyTorch 2.9.1 from the official CPU wheel index, and runs `make test-pytorch`, `make test-fx`, and `make test-codegen` with `PYTHON=python`. Local success does not confirm the latest workflow changes passed on GitHub; check Actions after pushing.
 
 ## Graph import and FX export
 
@@ -76,3 +84,5 @@ With the optional PyTorch dependency installed, run `python3 scripts/export_fx.p
 ## Generated C++ validation
 
 Run `make test-codegen` with the optional PyTorch dependency installed. It invokes the importer in `--emit-cpp` mode, compiles temporary standalone programs with `CXX`, and validates their execution. Temporary artifacts are automatically removed. See the README for the manual generate/compile/run commands.
+
+On macOS, sanitizer compilation can also create `.dSYM` debug bundles. The current `make clean` target does not remove these bundles. They are generated artifacts, not source files.

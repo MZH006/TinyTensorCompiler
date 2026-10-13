@@ -4,7 +4,7 @@
 
 An educational C++17 tensor graph compiler and CPU interpreter. It represents computations as an intermediate representation (IR), finds dependency order, and rewrites eligible operation chains into fused operations while preserving numerical results and graph connections.
 
-Built incrementally after a Python computational-graph prototype to explore compiler transformations, C++ ownership, and ML execution. The current backend executes handwritten CPU loops; code generation and accelerator lowering are future work.
+Built incrementally after a Python computational-graph prototype to explore compiler transformations, C++ ownership, and ML execution. The interpreter executes handwritten CPU loops with cached execution plans and reusable output buffers. A specialized source-code backend also emits standalone C++ for one fused linear/ReLU graph. Accelerator lowering is future work.
 
 ## Run it
 
@@ -20,7 +20,7 @@ make test-asan  # Requires a working AddressSanitizer runtime; exercised by Linu
 make benchmark
 ```
 
-The repository currently requires GitHub access while private. See [BUILDING.md](BUILDING.md) for build details and file organization.
+If the repository is private, cloning requires an authorized GitHub account. See [BUILDING.md](BUILDING.md) for build details and file organization.
 
 The example prints:
 
@@ -37,6 +37,7 @@ Outputs match: 1
 - **Tensor:** name, shape, optional float data, producer, and consumer registrations. Data is flat and row-major. Outputs can exist before numerical execution.
 - **Operation:** input tensor pointers, an owned output tensor, and a virtual `execute()` method. Concrete operations implement Add, MatMul, ReLU, and fused computations.
 - **Graph:** owns operations through `std::unique_ptr`, records one final output, and executes reachable operations in dependency order. Input tensors are caller-owned and must outlive the graph.
+- **Codegen:** emits a standalone C++ program for a supported fused linear/ReLU graph, embedding weights/bias and reading runtime input values.
 - **Optimizer:** matches contiguous chains in a topological order, invokes a pattern-specific builder, redirects consumers, updates the final graph output, disconnects old inputs, and substitutes the execution-order entries.
 
 Graph connections are non-owning pointers. Each input use has a corresponding consumer registration; `Add(x, x)` registers two uses. DFS visits each operation once, placing dependencies before their consumers.
@@ -64,9 +65,9 @@ Add requires equal shapes. MatMul supports two-dimensional matrices with matchin
 
 ## Correctness and CI
 
-`make test` runs 16 named test groups, including 32 seeded numerical cases compared with a double-precision reference using absolute and relative tolerances. Coverage includes final-output fusion, rectangular matrices, branch safety, repeated inputs, downstream rewiring, invalid shapes, missing data, matcher boundaries, multiple matches, repeated optimization, changed inputs, zero-sized dimensions, and pointer stability as ownership storage grows.
+`make test` runs 19 named test groups, including 32 seeded numerical cases compared with a double-precision reference using absolute and relative tolerances. Coverage includes final-output fusion, rectangular matrices, branch safety, repeated inputs, downstream rewiring, invalid shapes, missing data, matcher boundaries, multiple matches, repeated optimization, changed inputs, zero-sized dimensions, pointer stability as ownership storage grows, execution-plan reuse/invalidation, and stable output buffers with changed inputs.
 
-Linux CI builds on Ubuntu 24.04 and runs the tests, UndefinedBehaviorSanitizer, AddressSanitizer with leak detection, and the example. Sanitizer targets compile separate executables. Tests require assertions and reject `NDEBUG` builds. The workflow and its latest result are linked above. Local macOS AddressSanitizer previously failed during runtime initialization; use the Linux run to check that configuration.
+The main Linux CI job builds on Ubuntu 24.04 and runs the C++ tests, importer checks, UndefinedBehaviorSanitizer, AddressSanitizer with leak detection, and the example. A separate PyTorch job runs numerical, FX import, and standalone code-generation validation. Sanitizer targets compile separate executables. Tests require assertions and reject `NDEBUG` builds. The workflow and its latest result are linked above. Local macOS AddressSanitizer previously failed during runtime initialization; use the Linux run to check that configuration.
 
 ## PyTorch numerical validation
 
@@ -123,9 +124,9 @@ Bytes avoided are calculated as `2 * M * N * sizeof(float)`: the MatMul and Add 
 
 ## Current boundaries and next steps
 
-The supported model is a valid DAG with finite float data and one graph output. Matching depends on adjacency in a particular topological order. There is no cycle detection, dimension-product overflow protection, general tensor broadcasting, allocation-failure recovery, or reclamation of detached operations. Custom rewrite builders are expected to return valid replacements and terminating rules.
+The supported model is a valid DAG with finite float data and one graph output. Matching depends on adjacency in a particular topological order. There is no cycle detection, general tensor broadcasting, allocation-failure recovery, or reclamation of detached operations. Overflow checks exist in text declarations, writable-storage allocation, and code generation, but are not comprehensive: Tensor constructors, `setData()`, and operation output-shape calculations still require shapes with representable element counts. Custom rewrite builders are expected to return valid replacements and terminating rules.
 
-The experimental FX exporter supports a small concrete subset of PyTorch graphs, described below. Next steps include broader import support, memory planning and buffer reuse, and MLIR lowering. MLIR integration, device execution, and Tenstorrent hardware support are not implemented yet.
+The experimental FX exporter supports a small concrete subset of PyTorch graphs, described below. Next steps include broader import/code-generation support, lifetime-based sharing of buffers between tensors, and MLIR lowering. MLIR integration, device execution, and Tenstorrent hardware support are not implemented yet.
 
 ## Experimental FX graph import
 
@@ -142,7 +143,7 @@ The exporter uses [torch.fx symbolic tracing](https://docs.pytorch.org/docs/2.9/
 
 Supported tensors are nonempty rank-two strided CPU float32 tensors. Supported operations are positional `operator.matmul`/`torch.matmul`, `operator.add`/`torch.add`/tensor `.add()`, and `torch.relu`, with one tensor output. Addition requires identical shapes. Scalar operands, broadcasting, keyword arguments, other methods/modules/functions, and multiple outputs are rejected. Symbolic tracing itself has limitations, including data-dependent Python control flow.
 
-Text declarations use `input name rows columns` for runtime inputs and `tensor name rows columns data...` for constants, followed by `matmul out lhs rhs`, `add out lhs rhs`, `relu out input`, and one `output name`. Names must be defined before use and cannot be redefined. Blank lines are allowed; comments are not supported. The importer checks syntax, finite tensor data, positive dimensions, dimension-product overflow for declarations, duplicate names, and operation shapes. Errors include instruction line numbers and exit status 1.
+Text declarations use `input name rows columns` for runtime inputs and `tensor name rows columns data...` for constants, followed by `matmul out lhs rhs`, `add out lhs rhs`, `relu out input`, and one `output name`. Names must be defined before use and cannot be redefined. Blank lines are allowed; comments are not supported. The importer checks syntax, finite tensor data, positive dimensions, dimension-product overflow for declarations, duplicate names, and operation shapes. Graph-instruction errors include line numbers; errors exit with status 1. Input-data errors currently identify the input name but do not include a line number.
 
 For graphs without runtime inputs, the importer executes before and after fusion and compares finite values with `atol=1e-5`, `rtol=1e-4`. Output uses float32 round-trip precision. `make test-import` covers the example, an input-only graph, 15 invalid graph files, repeated execution, and five invalid second-run input files. `make test-fx` exports eight seeded rectangular graphs (including reversed Add inputs), runs each optimized graph with two input files in one C++ process, compares all 16 results with PyTorch, checks fusion to one operation, and rejects ten unsupported exports and three invalid Python input serializations. Both targets are included in Linux CI; workflow changes require pushing before CI runs them.
 
