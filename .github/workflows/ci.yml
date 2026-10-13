@@ -74,3 +74,6 @@ jobs:
 
       - name: Validate FX export and imported fusion
         run: make test-fx PYTHON=python
+
+      - name: Validate standalone generated C++
+        run: make test-codegen PYTHON=python

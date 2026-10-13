@@ -153,3 +153,18 @@ For runtime models, use `./graph-import model.graph first.txt second.txt`. The g
 `Graph::execute()` builds and stores the reachable operation order on first use. Repeated executions and `Tensor::setData()` reuse that plan. Changing the output or adding an operation invalidates the graph's plan. Producer changes, input replacement, and input disconnection advance a shared topology revision, so raw-pointer rewrites also force a rebuild on the next execution. This conservative mechanism can invalidate plans in unrelated graphs; construction, mutation, and execution are single-threaded. `getExecutionOrder()` remains a fresh traversal for inspection and optimization. `getPlanBuildCount()` exposes rebuilds for correctness tests. Add, MatMul, ReLU, FusedAddReLU, and FusedLinearReLU fill output tensors through `getWritableData()`: storage is allocated on first execution and reused on later runs. Callers must overwrite all elements without resizing the returned vector. MatMul starts each reduction from zero, including zero-length reductions. Tests check stable output addresses and updated values across sign changes and repeated executions. Sharing buffers between different tensors is not implemented.
 
 A before/after comparison of execution-plan caching and buffer reuse is recorded in [the benchmark report](benchmarks/execution-reuse-2026-10-12.md), with all raw round medians in the adjacent JSON file. The small case improved; larger cases remained near parity or varied between runs. These measurements combine both changes.
+
+## Experimental standalone C++ generation
+
+```sh
+make graph-import
+python3 scripts/export_fx.py /tmp/model.graph --inputs /tmp/inputs.txt
+./graph-import --emit-cpp /tmp/model.graph /tmp/generated.cpp
+clang++ -std=c++17 -Wall -Wextra -O3 /tmp/generated.cpp -o /tmp/generated
+printf '1 2\n' | /tmp/generated
+make test-codegen
+```
+
+The first backend supports a graph that optimizes to exactly one `FusedLinearReLU`, with exactly one declared runtime input for x and finite embedded weights/bias. Shapes must be nonempty and fixed. Other graphs are rejected. The generated program reads exactly M*K raw finite floats from standard input (without the input name used by importer data files), then prints M*N row-major floats. It requires no project headers, graph objects, virtual dispatch, or compiler runtime. Each invocation allocates its own vectors and executes once; it does not provide the interpreter's multiple-input-file protocol. Weights and bias are float32 literals written with round-trip precision and a fixed locale.
+
+`make test-codegen` exports six models with rectangular shapes and both Add operand orders, generates and compiles each source alone with warnings as errors, compares two inputs per executable against PyTorch, checks 18 malformed runtime inputs, and rejects an unsupported graph without creating a source file. The PyTorch CI job includes this target after the workflow is pushed. This is a specialized source-code backend, not MLIR lowering or a general native-code compiler.

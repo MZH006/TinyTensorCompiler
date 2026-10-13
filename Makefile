@@ -3,14 +3,14 @@ PYTHON ?= python3
 CXXFLAGS := -std=c++17 -Wall -Wextra
 
 TARGET := main
-CORE_SOURCES := Tensor.cpp Operation.cpp Ops.cpp Optimizer.cpp Graph.cpp
+CORE_SOURCES := Tensor.cpp Operation.cpp Ops.cpp Optimizer.cpp Graph.cpp Codegen.cpp
 CORE_OBJECTS := $(CORE_SOURCES:.cpp=.o)
 OBJECTS := main.o $(CORE_OBJECTS)
 TEST_TARGET := tests
 TEST_OBJECTS := tests.o $(CORE_OBJECTS)
 DEPS := $(sort $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d) linear_runner.d graph_import.d)
 
-.PHONY: all run test test-ubsan test-asan test-pytorch test-import test-fx benchmark clean
+.PHONY: all run test test-ubsan test-asan test-pytorch test-import test-fx test-codegen benchmark clean
 
 all: $(TARGET)
 
@@ -41,6 +41,9 @@ test-import: graph-import
 
 test-fx: graph-import
 	$(PYTHON) scripts/validate_fx.py ./graph-import
+
+test-codegen: graph-import
+	$(PYTHON) scripts/validate_codegen.py --runner ./graph-import --cxx "$(CXX)"
 
 test-pytorch: linear-runner
 	$(PYTHON) scripts/validate_pytorch.py --runner ./linear-runner

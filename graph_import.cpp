@@ -1,10 +1,12 @@
 #include "Graph.h"
 #include "Ops.h"
 #include "Optimizer.h"
+#include "Codegen.h"
 
 #include <cmath>
 #include <cstddef>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <iomanip>
 #include <limits>
@@ -22,6 +24,11 @@ int main(int argc, char* argv[]) {
         if (argc < 2){
             throw std::runtime_error("Usage: graph-import <graph-file> [input-file ...]");
         }
+        const bool generate = std::string(argv[1]) == "--emit-cpp";
+        if (generate && argc != 4) {
+            throw std::runtime_error("Usage: graph-import --emit-cpp <graph-file> <output.cpp>");
+        }
+        const char* graphFilename = argv[generate ? 2 : 1];
         std::cout << std::setprecision(std::numeric_limits<float>::max_digits10);
         // Inputs outlive Graph; moving unique_ptrs preserves tensor addresses.
         std::vector<std::unique_ptr<Tensor>> tensors;
@@ -38,9 +45,9 @@ int main(int argc, char* argv[]) {
             return it->second;
         };
 
-        std::ifstream program(argv[1]);
+        std::ifstream program(graphFilename);
         if (!program) {
-            throw std::runtime_error("Could not open " + std::string(argv[1]));
+            throw std::runtime_error("Could not open " + std::string(graphFilename));
         }
 
         std::size_t lineNumber = 0;
@@ -183,6 +190,33 @@ int main(int argc, char* argv[]) {
         }
         if (graph.getOutput() == nullptr) {
             throw std::runtime_error("Missing output instruction");
+        }
+
+        if (generate) {
+            const std::vector<FusionPattern> patterns{
+                {"linear_relu", {"MatMul", "Add", "ReLU"}, buildLinearReLUPattern}
+            };
+            optimize(graph, patterns);
+            const auto order = graph.getExecutionOrder();
+            if (order.size() != 1 || inputs.size() != 1 ||
+                order.front()->getInputs().empty() ||
+                inputs.begin()->second != order.front()->getInputs()[0]) {
+                throw std::runtime_error("Codegen requires exactly one runtime input: linear x");
+            }
+            std::ostringstream source;
+            emitCpp(graph, source);
+            std::error_code pathError;
+            if (std::filesystem::weakly_canonical(argv[3]) ==
+                    std::filesystem::weakly_canonical(graphFilename) ||
+                std::filesystem::equivalent(argv[3], graphFilename, pathError)) {
+                throw std::runtime_error("Source output must differ from model file");
+            }
+            std::ofstream destination(argv[3]);
+            destination << source.str();
+            destination.close();
+            if (!destination) throw std::runtime_error("Failed to write generated source");
+            std::cout << "Generated " << argv[3] << "\n";
+            return 0;
         }
 
         auto loadInputs = [&](const char* filename) {
