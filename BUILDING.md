@@ -71,4 +71,4 @@ The `pytorch-validation` CI job runs independently of the existing build/sanitiz
 
 `make graph-import` builds the file importer. Run `./graph-import example.graph` to import, execute, fuse, and compare results. `make test-import` uses Python's standard library and needs no PyTorch installation. `make clean` removes the importer executable, object, and dependency file.
 
-With the optional PyTorch dependency installed, run `python3 scripts/export_fx.py /tmp/model.graph`, then `./graph-import /tmp/model.graph`. Run `make test-fx` for end-to-end model export and numerical validation; `PYTHON` selects its interpreter too. CI runs importer checks in the main job and FX validation in the PyTorch job.
+With the optional PyTorch dependency installed, run `python3 scripts/export_fx.py /tmp/model.graph --inputs /tmp/inputs.txt`, then `./graph-import /tmp/model.graph /tmp/inputs.txt`. Run `make test-fx` for end-to-end model export and numerical validation; `PYTHON` selects its interpreter too. CI runs importer checks in the main job and FX validation in the PyTorch job.

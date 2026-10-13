@@ -45,4 +45,29 @@ with tempfile.TemporaryDirectory() as directory:
     assert "Operations: 0 -> 0" in result.stdout
     assert "Optimized result: -3 4" in result.stdout
 
-print(f"PASS: fused graph, input-only graph, {len(invalid)} invalid graphs")
+with tempfile.TemporaryDirectory() as directory:
+    model = Path(directory) / "model.graph"
+    first = Path(directory) / "first.txt"
+    second = Path(directory) / "second.txt"
+    model.write_text(example.read_text().replace("tensor x 1 2 1 2", "input x 1 2"))
+    first.write_text("x 1 2\n")
+    second.write_text("x 3 4\n")
+    result = subprocess.run([runner, str(model), str(first), str(second)],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("Operations: 3 -> 1") == 1, result.stdout
+    assert [line for line in result.stdout.splitlines() if line.startswith("Result:")] == [
+        "Result: 8 0 ", "Result: 16 2 "]
+    for text, message in [("", "Missing input data: x"),
+                          ("x 3 4\nx 5 6\n", "Duplicate input data: x"),
+                          ("x 3\n", "Expected 2 finite values"),
+                          ("x 3 4 5\n", "Unexpected extra argument"),
+                          ("weights 3 4\n", "Unknown input: weights")]:
+        second.write_text(text)
+        result = subprocess.run([runner, str(model), str(first), str(second)],
+                                capture_output=True, text=True, timeout=10)
+        assert result.returncode == 1 and message in result.stderr, result
+        assert result.stdout.count("Result:") == 1, result.stdout
+
+print(f"PASS: fused graph, input-only graph, {len(invalid)} invalid graphs, "
+      "reused runtime graph and 5 invalid second runs")

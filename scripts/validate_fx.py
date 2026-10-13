@@ -5,7 +5,7 @@ import sys
 import tempfile
 
 import torch
-from export_fx import LinearReLU, export_graph
+from export_fx import LinearReLU, export_graph, export_inputs
 
 
 def main():
@@ -20,17 +20,22 @@ def main():
                 x = torch.randn(m, k, generator=generator)
                 model = LinearReLU(torch.randn(k, n, generator=generator),
                                    torch.randn(m, n, generator=generator), reverse)
-                path.write_text(export_graph(model, (x,)))
-                result = subprocess.run([runner, str(path)], capture_output=True,
+                text = export_graph(model, (x,))
+                path.write_text(text)
+                assert text.startswith(f"input x {m} {k}\n"), text
+                samples = [x, torch.randn(m, k, generator=generator)]
+                files = [Path(directory) / f"input{i}.txt" for i in range(2)]
+                for filename, sample in zip(files, samples):
+                    filename.write_text(export_inputs(text, (sample,)))
+                result = subprocess.run([runner, str(path), *map(str, files)], capture_output=True,
                                         text=True, timeout=30, check=True)
-                assert "Operations: 3 -> 1" in result.stdout, result.stdout
-                assert "FusedLinearReLU" in result.stdout, result.stdout
-                assert "Outputs match: true" in result.stdout, result.stdout
-                expected = model(x)
-                for prefix in ["Original result: ", "Optimized result: "]:
-                    line = next(line for line in result.stdout.splitlines() if line.startswith(prefix))
-                    actual = torch.tensor(list(map(float, line[len(prefix):].split()))).reshape(m, n)
-                    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-5)
+                assert result.stdout.count("Operations: 3 -> 1") == 1, result.stdout
+                results = [line[len("Result: "):] for line in result.stdout.splitlines()
+                           if line.startswith("Result: ")]
+                assert len(results) == 2, result.stdout
+                for data, sample in zip(results, samples):
+                    actual = torch.tensor(list(map(float, data.split()))).reshape(m, n)
+                    torch.testing.assert_close(actual, model(sample), rtol=1e-4, atol=1e-5)
                 count += 1
 
     class Unsupported(torch.nn.Module):
@@ -68,7 +73,15 @@ def main():
             pass
         else:
             raise AssertionError(f"Unsupported export accepted: {model}")
-    print(f"PASS: {count} FX graphs, {2 * count} PyTorch comparisons, {len(cases)} rejected exports")
+    for supplied in [(), (torch.ones(1, 2),), (x.double(),)]:
+        try:
+            export_inputs("input x 2 2\noutput x\n", supplied)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Invalid runtime inputs accepted")
+    print(f"PASS: {count} FX models reused for two inputs each, {2 * count} PyTorch comparisons, "
+          f"{len(cases)} rejected exports, 3 rejected runtime inputs")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
-"""Export a small CPU float32 FX subset as a concrete tensor graph.
+"""Export a small CPU float32 FX subset with fixed-shape runtime inputs.
 
 Supported: rank-two tensor inputs/constants, positional matmul/add/relu,
-and one tensor output. Inputs are embedded examples, not runtime placeholders.
+and one tensor output. Example inputs validate shapes; their data is separate.
 """
 import argparse
 import operator
@@ -43,8 +43,11 @@ def export_graph(model, inputs):
                 check_tensor(value)
                 value = value.detach()
                 env[node] = value
-                data = " ".join(map(repr, value.flatten().tolist()))
-                lines.append(f"tensor {node.name} {value.shape[0]} {value.shape[1]} {data}")
+                if node.op == "placeholder":
+                    lines.append(f"input {node.name} {value.shape[0]} {value.shape[1]}")
+                else:
+                    data = " ".join(map(repr, value.flatten().tolist()))
+                    lines.append(f"tensor {node.name} {value.shape[0]} {value.shape[1]} {data}")
             elif node.op == "call_function" or (node.op == "call_method" and node.target == "add"):
                 targets = {operator.matmul: "matmul", torch.matmul: "matmul",
                            operator.add: "add", torch.add: "add", torch.relu: "relu"}
@@ -76,6 +79,22 @@ def export_graph(model, inputs):
     return "\n".join(lines) + "\n"
 
 
+def export_inputs(graph_text, inputs):
+    """Serialize values in the same placeholder order used for export_graph."""
+    declarations = [line.split() for line in graph_text.splitlines()
+                    if line.startswith("input ")]
+    if len(declarations) != len(inputs):
+        raise ValueError("Input count does not match exported declarations")
+    lines = []
+    for declaration, value in zip(declarations, inputs):
+        check_tensor(value)
+        _, name, rows, columns = declaration
+        if list(value.shape) != [int(rows), int(columns)]:
+            raise ValueError(f"Wrong shape for input: {name}")
+        lines.append(name + " " + " ".join(map(repr, value.detach().flatten().tolist())))
+    return "\n".join(lines) + "\n"
+
+
 class LinearReLU(torch.nn.Module):
     def __init__(self, weights, bias, reverse_add=False):
         super().__init__()
@@ -92,11 +111,18 @@ class LinearReLU(torch.nn.Module):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--inputs", type=Path, required=True,
+                        help="File to receive demonstration runtime input values")
     args = parser.parse_args()
     model = LinearReLU(torch.tensor([[1., 2.], [3., 4.]]), torch.tensor([[1., -20.]]))
-    text = export_graph(model, (torch.tensor([[1., 2.]]),))
+    inputs = (torch.tensor([[1., 2.]]),)
+    text = export_graph(model, inputs)
+    data = export_inputs(text, inputs)
+    if args.output.resolve() == args.inputs.resolve():
+        parser.error("Model and input files must have different paths")
     args.output.write_text(text)
-    print(f"Exported {args.output}")
+    args.inputs.write_text(data)
+    print(f"Exported {args.output} and {args.inputs}")
 
 
 if __name__ == "__main__":

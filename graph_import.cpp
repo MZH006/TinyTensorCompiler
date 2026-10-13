@@ -13,13 +13,14 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 int main(int argc, char* argv[]) {
     try {
-        if (argc != 2) {
-            throw std::runtime_error("Usage: graph-import <graph-file>");
+        if (argc < 2){
+            throw std::runtime_error("Usage: graph-import <graph-file> [input-file ...]");
         }
         std::cout << std::setprecision(std::numeric_limits<float>::max_digits10);
         // Inputs outlive Graph; moving unique_ptrs preserves tensor addresses.
@@ -27,6 +28,7 @@ int main(int argc, char* argv[]) {
         Graph graph;
 
         std::unordered_map<std::string, Tensor*> values;
+        std::unordered_map<std::string, Tensor*> inputs;
 
         auto lookup = [&](const std::string& name) -> Tensor* {
             auto it = values.find(name);
@@ -51,8 +53,35 @@ int main(int argc, char* argv[]) {
                 if (!(stream >> opcode)) {
                     continue;
                 }
+                if (opcode == "input") {
+                    std::string name;
+                    long long rows, columns;
+                    if (!(stream >> name >> rows >> columns) || rows <= 0 || columns <= 0) {
+                        throw std::runtime_error("Expected: input name positive-rows positive-columns");
+                    }
+                    if (values.find(name) != values.end()) {
+                        throw std::runtime_error("Duplicate input name: " + name);
+                    }
+                    const auto m = static_cast<std::size_t>(rows);
+                    const auto n = static_cast<std::size_t>(columns);
+                    if (m > std::numeric_limits<std::size_t>::max() / n) {
+                        throw std::runtime_error("Input shape is too large");
+                    }
 
-                if (opcode == "tensor") {
+                    std::string extra;
+                    if (stream >> extra) {
+                        throw std::runtime_error("Unexpected extra argument: " + extra);
+                    }
+
+                    auto tensor = std::make_unique<Tensor>(name, std::vector<std::size_t>{m, n});
+
+                    values.emplace(name, tensor.get());
+                    inputs.emplace(name, tensor.get());
+                    tensors.push_back(std::move(tensor));
+
+                }
+
+                else if (opcode == "tensor") {
                     std::string name;
                     long long rows, columns;
                     if (!(stream >> name >> rows >> columns) || rows <= 0 || columns <= 0) {
@@ -155,6 +184,92 @@ int main(int argc, char* argv[]) {
         if (graph.getOutput() == nullptr) {
             throw std::runtime_error("Missing output instruction");
         }
+
+        auto loadInputs = [&](const char* filename) {
+            std::unordered_set<std::string> suppliedInputs;
+            std::ifstream inputFile(filename);
+            if (!inputFile) {
+                throw std::runtime_error("Could not open " + std::string(filename));
+            }
+            std::string inputLine;
+            while (std::getline(inputFile, inputLine)) {
+                std::istringstream stream(inputLine);
+                std::string name;
+
+                if (!(stream >> name)) {
+                    continue;
+                }
+
+                auto it = inputs.find(name);
+                if (it == inputs.end()) {
+                    throw std::runtime_error("Unknown input: " + name);
+                }
+                if (suppliedInputs.find(name) != suppliedInputs.end()) {
+                    throw std::runtime_error("Duplicate input data: " + name);
+                }
+
+                Tensor* tensor = it->second;
+                const auto& shape = tensor->getShape();
+                const std::size_t count = shape[0] * shape[1];
+
+                std::vector<float> data;
+                for (std::size_t i = 0; i < count; ++i) {
+                    float value;
+                    if (!(stream >> value) || !std::isfinite(value)) {
+                        throw std::runtime_error(
+                            "Expected " + std::to_string(count)
+                            + " finite values for input: " + name);
+                    }
+                    data.push_back(value);
+                }
+                std::string extra;
+                if (stream >> extra) {
+                    throw std::runtime_error(
+                        "Unexpected extra argument for input " + name + ": " + extra);
+                }
+                tensor->setData(std::move(data));
+                suppliedInputs.insert(name);
+            }
+            if (inputFile.bad()) {
+                throw std::runtime_error("Failed to read input file");
+            }
+            for (const auto& entry : inputs) {
+                if (suppliedInputs.find(entry.first) == suppliedInputs.end()) {
+                    throw std::runtime_error("Missing input data: " + entry.first);
+                }
+            }
+        };
+
+        if (!inputs.empty()) {
+            if (argc == 2) {
+                throw std::runtime_error("Missing input data: " + inputs.begin()->first);
+            }
+            const auto originalCount = graph.getExecutionOrder().size();
+            const std::vector<FusionPattern> patterns{
+                {"linear_relu", {"MatMul", "Add", "ReLU"}, buildLinearReLUPattern},
+                {"add_relu", {"Add", "ReLU"}, buildAddReLUPattern}
+            };
+            optimize(graph, patterns);
+            std::cout << "Operations: " << originalCount << " -> "
+                      << graph.getExecutionOrder().size() << "\n";
+            for (int fileIndex = 2; fileIndex < argc; ++fileIndex) {
+                loadInputs(argv[fileIndex]);
+                graph.execute();
+                std::cout << "Input file: " << argv[fileIndex] << "\nResult: ";
+                for (float value : graph.getOutput()->getData()) {
+                    if (!std::isfinite(value)) {
+                        throw std::runtime_error("Nonfinite execution result");
+                    }
+                    std::cout << value << " ";
+                }
+                std::cout << "\n";
+            }
+            return 0;
+        }
+        if (argc > 2) {
+            throw std::runtime_error("Input files supplied but model declares no inputs");
+        }
+
         const auto originalCount = graph.getExecutionOrder().size();
         graph.execute();
         const std::vector<float> original = graph.getOutput()->getData();
