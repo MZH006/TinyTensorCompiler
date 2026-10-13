@@ -1,0 +1,231 @@
+{
+  "revisions": {
+    "before": "414db20",
+    "after": "7183d4d"
+  },
+  "method": "5 alternating whole-program rounds; each program reports median of 21 batches x 50 executions per shape/mode, after warmup. Aggregate is median of 5 reported medians. Times in microseconds, printed harness precision 0.001 us.",
+  "raw_rounds": {
+    "before": [
+      [
+        [
+          0.723,
+          0.464
+        ],
+        [
+          33.533,
+          32.07
+        ],
+        [
+          278.621,
+          279.033
+        ]
+      ],
+      [
+        [
+          0.696,
+          0.436
+        ],
+        [
+          26.14,
+          26.102
+        ],
+        [
+          279.248,
+          280.298
+        ]
+      ],
+      [
+        [
+          0.693,
+          0.45
+        ],
+        [
+          26.01,
+          26.014
+        ],
+        [
+          279.599,
+          280.149
+        ]
+      ],
+      [
+        [
+          0.703,
+          0.451
+        ],
+        [
+          26.127,
+          27.273
+        ],
+        [
+          279.218,
+          280.208
+        ]
+      ],
+      [
+        [
+          0.702,
+          0.446
+        ],
+        [
+          26.052,
+          27.28
+        ],
+        [
+          279.89,
+          280.307
+        ]
+      ]
+    ],
+    "after": [
+      [
+        [
+          0.807,
+          0.844
+        ],
+        [
+          31.108,
+          32.016
+        ],
+        [
+          276.247,
+          279.217
+        ]
+      ],
+      [
+        [
+          0.33,
+          0.32
+        ],
+        [
+          26.641,
+          25.844
+        ],
+        [
+          277.433,
+          279.198
+        ]
+      ],
+      [
+        [
+          0.344,
+          0.315
+        ],
+        [
+          26.551,
+          25.802
+        ],
+        [
+          275.919,
+          278.878
+        ]
+      ],
+      [
+        [
+          0.313,
+          0.337
+        ],
+        [
+          25.306,
+          25.796
+        ],
+        [
+          276.493,
+          279.438
+        ]
+      ],
+      [
+        [
+          0.332,
+          0.313
+        ],
+        [
+          26.516,
+          25.719
+        ],
+        [
+          276.773,
+          278.479
+        ]
+      ]
+    ]
+  },
+  "summary": [
+    {
+      "shape": "8x16x8",
+      "before_unfused": 0.702,
+      "before_unfused_range": [
+        0.693,
+        0.723
+      ],
+      "before_fused": 0.45,
+      "before_fused_range": [
+        0.436,
+        0.464
+      ],
+      "after_unfused": 0.332,
+      "after_unfused_range": [
+        0.313,
+        0.807
+      ],
+      "after_fused": 0.32,
+      "after_fused_range": [
+        0.313,
+        0.844
+      ]
+    },
+    {
+      "shape": "32x64x32",
+      "before_unfused": 26.127,
+      "before_unfused_range": [
+        26.01,
+        33.533
+      ],
+      "before_fused": 27.273,
+      "before_fused_range": [
+        26.014,
+        32.07
+      ],
+      "after_unfused": 26.551,
+      "after_unfused_range": [
+        25.306,
+        31.108
+      ],
+      "after_fused": 25.802,
+      "after_fused_range": [
+        25.719,
+        32.016
+      ]
+    },
+    {
+      "shape": "64x128x64",
+      "before_unfused": 279.248,
+      "before_unfused_range": [
+        278.621,
+        279.89
+      ],
+      "before_fused": 280.208,
+      "before_fused_range": [
+        279.033,
+        280.307
+      ],
+      "after_unfused": 276.493,
+      "after_unfused_range": [
+        275.919,
+        277.433
+      ],
+      "after_fused": 279.198,
+      "after_fused_range": [
+        278.479,
+        279.438
+      ]
+    }
+  ],
+  "environment": {
+    "date": "2026-10-12",
+    "os": "macOS-26.6.2-arm64-arm-64bit",
+    "compiler": "Apple clang version 15.0.0 (clang-1500.3.9.4)",
+    "flags": "-std=c++17 -Wall -Wextra -O3",
+    "harness": "benchmark.cpp identical at both compared commits"
+  }
+}

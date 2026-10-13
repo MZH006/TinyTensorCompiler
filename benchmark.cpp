@@ -127,7 +127,7 @@ void benchmarkShape(std::size_t M, std::size_t K, std::size_t N) {
     const std::size_t avoided_bytes = 2 * M * N * sizeof(float);
     std::cout << "Intermediate tensor bytes avoided: " << avoided_bytes << "\n";
     std::cout << "21 samples per graph, 50 executions per batch; construction and optimization excluded.\n"
-              << "Includes traversal, numerical execution, and per-run allocations.\n"
+              << "Steady-state execution uses cached order and reusable output buffers; includes numerical loops.\n"
               << "Single Shape: timings are exploratory, not a general speedup claim.\n";
 }
 
