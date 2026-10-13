@@ -125,10 +125,23 @@ Bytes avoided are calculated as `2 * M * N * sizeof(float)`: the MatMul and Add 
 
 The supported model is a valid DAG with finite float data and one graph output. Matching depends on adjacency in a particular topological order. There is no cycle detection, dimension-product overflow protection, general tensor broadcasting, allocation-failure recovery, or reclamation of detached operations. Custom rewrite builders are expected to return valid replacements and terminating rules.
 
-Next steps are PyTorch graph import, memory planning and buffer reuse, and MLIR lowering. PyTorch import, MLIR integration, device execution, and Tenstorrent hardware support are not implemented yet.
+The experimental FX exporter supports a small concrete subset of PyTorch graphs, described below. Next steps include broader import support, memory planning and buffer reuse, and MLIR lowering. MLIR integration, device execution, and Tenstorrent hardware support are not implemented yet.
 
-## Text graph importer
+## Experimental FX graph import
 
-Build with `make graph-import`, then run `./graph-import example.graph`. The file defines rank-two input tensors, MatMul/Add/ReLU operations, and one output. Tensor declarations use `tensor name rows columns data...`; operations use `matmul out lhs rhs`, `add out lhs rhs`, and `relu out input`, followed by `output name`. Names must be defined before use and cannot be redefined. Blank lines are allowed; comments are not supported.
+```sh
+make graph-import
+./graph-import example.graph
+python3 scripts/export_fx.py /tmp/model.graph
+./graph-import /tmp/model.graph
+make test-import
+make test-fx
+```
 
-The importer owns input tensors, validates syntax and shapes, and reports instruction errors with line numbers and exit status 1. It executes before and after fusion, prints operation counts and results, and compares finite values with `atol=1e-5`, `rtol=1e-4`. The example fuses three operations to one and produces `8 0`. `make test-import` checks two valid graphs and 15 invalid files using only Python's standard library. Linux CI includes these checks after the workflow is pushed. `make clean` removes importer build artifacts.
+The exporter uses [torch.fx symbolic tracing](https://docs.pytorch.org/docs/2.9/fx.html) to read model structure. `export_graph(model, inputs)` returns text; the CLI exports a small demonstration model. Inputs and model tensor attributes are embedded as concrete values. This is inference for the exported example, not a reusable model with runtime inputs or a general PyTorch compiler. Only trusted Python models should be traced: tracing executes Python model code.
+
+Supported tensors are nonempty rank-two strided CPU float32 tensors. Supported operations are positional `operator.matmul`/`torch.matmul`, `operator.add`/`torch.add`/tensor `.add()`, and `torch.relu`, with one tensor output. Addition requires identical shapes. Scalar operands, broadcasting, keyword arguments, other methods/modules/functions, and multiple outputs are rejected. Symbolic tracing itself has limitations, including data-dependent Python control flow.
+
+Text declarations use `tensor name rows columns data...`, followed by `matmul out lhs rhs`, `add out lhs rhs`, `relu out input`, and one `output name`. Names must be defined before use and cannot be redefined. Blank lines are allowed; comments are not supported. The importer checks syntax, finite tensor data, positive dimensions, dimension-product overflow for declarations, duplicate names, and operation shapes. Errors include instruction line numbers and exit status 1.
+
+The importer executes before and after fusion and compares finite values with `atol=1e-5`, `rtol=1e-4`. Output uses float32 round-trip precision. `make test-import` covers the example, an input-only graph, and 15 invalid graph files. `make test-fx` exports eight seeded rectangular graphs (including reversed Add inputs), compares both C++ results with PyTorch, checks fusion to one operation, and rejects ten unsupported exports. Both targets are included in Linux CI; workflow changes require pushing before CI runs them.

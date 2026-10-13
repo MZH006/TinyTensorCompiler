@@ -71,3 +71,6 @@ jobs:
 
       - name: Compare C++ execution with PyTorch
         run: make test-pytorch PYTHON=python
+
+      - name: Validate FX export and imported fusion
+        run: make test-fx PYTHON=python

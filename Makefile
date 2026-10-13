@@ -10,7 +10,7 @@ TEST_TARGET := tests
 TEST_OBJECTS := tests.o $(CORE_OBJECTS)
 DEPS := $(sort $(OBJECTS:.o=.d) $(TEST_OBJECTS:.o=.d) linear_runner.d graph_import.d)
 
-.PHONY: all run test test-ubsan test-asan test-pytorch test-import benchmark clean
+.PHONY: all run test test-ubsan test-asan test-pytorch test-import test-fx benchmark clean
 
 all: $(TARGET)
 
@@ -38,6 +38,9 @@ graph-import: graph_import.o $(CORE_OBJECTS)
 
 test-import: graph-import
 	$(PYTHON) scripts/test_graph_import.py ./graph-import
+
+test-fx: graph-import
+	$(PYTHON) scripts/validate_fx.py ./graph-import
 
 test-pytorch: linear-runner
 	$(PYTHON) scripts/validate_pytorch.py --runner ./linear-runner
