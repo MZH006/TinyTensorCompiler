@@ -1,7 +1,9 @@
 #include "Tensor.h"
+#include "Topology.h"
 
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 Tensor::Tensor(std::string tensor_name,
@@ -62,7 +64,10 @@ void Tensor::addConsumer(Operation* consumer) {
 }
 
 void Tensor::setProducer(Operation* operation) {
-    producer = operation;
+    if (producer != operation) {
+        producer = operation;
+        topology::changed();
+    }
 }
 
 void Tensor::setData(std::vector<float> new_data) {
@@ -80,6 +85,20 @@ void Tensor::setData(std::vector<float> new_data) {
 const std::vector<float>& Tensor::getData() const {
     if (!data.has_value()) {
         throw std::runtime_error("Tensor data is not available");
+    }
+    return *data;
+}
+
+std::vector<float>& Tensor::getWritableData() {
+    if (!data.has_value()) {
+        std::size_t count = 1;
+        for (std::size_t dimension : shape) {
+            if (dimension != 0 && count > std::numeric_limits<std::size_t>::max() / dimension) {
+                throw std::overflow_error("Tensor shape is too large");
+            }
+            count *= dimension;
+        }
+        data.emplace(count);
     }
     return *data;
 }

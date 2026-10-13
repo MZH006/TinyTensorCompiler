@@ -29,6 +29,9 @@ public:
 
     const std::vector<float>& getData() const;
 
+    // Allocate on first use. Callers must overwrite all elements and not resize.
+    std::vector<float>& getWritableData();
+
     Operation* getProducer() const;
 
     const std::vector<Operation*>& getConsumers() const;

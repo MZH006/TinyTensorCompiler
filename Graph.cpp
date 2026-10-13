@@ -1,5 +1,6 @@
 #include "Graph.h"
 #include "Optimizer.h"
+#include "Topology.h"
 
 #include <stdexcept>
 #include <unordered_set>
@@ -11,6 +12,7 @@ Operation* Graph::addOperation(std::unique_ptr<Operation> operation) {
     }
     Operation* pointer = operation.get();
     operations.push_back(std::move(operation));
+    planValid = false;
     return pointer;
 }
 
@@ -24,8 +26,18 @@ std::vector<Operation*> Graph::getExecutionOrder() const {
     return order;
 }
 
+void Graph::prepareExecutionPlan() {
+    if (!planValid || planRevision != topology::revision) {
+        executionPlan = getExecutionOrder();
+        planRevision = topology::revision;
+        planValid = true;
+        ++planBuildCount;
+    }
+}
+
 void Graph::execute() {
-    for (Operation* operation : getExecutionOrder()) {
+    prepareExecutionPlan();
+    for (Operation* operation : executionPlan) {
         operation->execute();
     }
 }

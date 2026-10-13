@@ -10,12 +10,11 @@ void Add::execute()  {
     const std::vector<float>& a = getInputs()[0]->getData();
     const std::vector<float>& b = getInputs()[1]->getData();
 
-    std::vector<float> result(a.size());
+    std::vector<float>& result = getOutput()->getWritableData();
     for (std::size_t i = 0; i < a.size(); i++) {
         result[i] = a[i] + b[i];
     }
 
-    getOutput()->setData(result);
 }
 
 std::vector<std::size_t> Add::checkedShape(Tensor* a, Tensor* b) {
@@ -38,7 +37,7 @@ void MatMul::execute()  {
     const std::size_t M = a_shape[0];
     const std::size_t K = a_shape[1];
     const std::size_t N = b_shape[1];
-    std::vector<float> result(M * N, 0.0f);
+    std::vector<float>& result = getOutput()->getWritableData();
 
     for (std::size_t i = 0; i < M; i++) {
         for (std::size_t j = 0; j < N; j++) {
@@ -49,7 +48,6 @@ void MatMul::execute()  {
             result[i * N + j] = sum;
         }
     }
-    getOutput()->setData(result);
 }
 
 std::vector<std::size_t> MatMul::checkedShape(Tensor* a, Tensor* b) {
@@ -68,11 +66,10 @@ ReLU::ReLU(Tensor* input)
 
 void ReLU::execute()  {
     const std::vector<float>& input = getInputs()[0]->getData();
-    std::vector<float> result(input.size());
+    std::vector<float>& result = getOutput()->getWritableData();
     for (std::size_t i = 0; i < input.size(); i++) {
         result[i] = input[i] < 0.0f ? 0.0f : input[i];
     }
-    getOutput()->setData(result);
 }
 
 FusedAddReLU::FusedAddReLU(Tensor* a, Tensor* b)
@@ -82,12 +79,11 @@ FusedAddReLU::FusedAddReLU(Tensor* a, Tensor* b)
 void FusedAddReLU::execute()  {
     const std::vector<float>& a = getInputs()[0]->getData();
     const std::vector<float>& b = getInputs()[1]->getData();
-    std::vector<float> result(a.size());
+    std::vector<float>& result = getOutput()->getWritableData();
     for (std::size_t i = 0; i < a.size(); i++) {
         const float sum = a[i] + b[i];
         result[i] = sum < 0.0f ? 0.0f : sum;
     }
-    getOutput()->setData(result);
 }
 
 std::vector<std::size_t> FusedAddReLU::checkedShape(Tensor* a, Tensor* b) {
@@ -110,7 +106,7 @@ void FusedLinearReLU::execute()  {
     const std::size_t M = x_shape[0];
     const std::size_t K = x_shape[1];
     const std::size_t N = weights_shape[1];
-    std::vector<float> result(M * N);
+    std::vector<float>& result = getOutput()->getWritableData();
 
     for (std::size_t i = 0; i < M; i++) {
         for (std::size_t j = 0; j < N; j++) {
@@ -122,7 +118,6 @@ void FusedLinearReLU::execute()  {
             result[i * N + j] = sum < 0.0f ? 0.0f : sum;
         }
     }
-    getOutput()->setData(result);
 }
 
 std::vector<std::size_t> FusedLinearReLU::checkedShape(

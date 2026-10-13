@@ -431,6 +431,107 @@ void testLinearFusionAgainstReference() {
     }
 }
 
+void testExecutionPlanCaching() {
+    Tensor x("x", {1.f, -2.f}, {1, 2});
+    Tensor bias("bias", {2.f, 3.f}, {1, 2});
+    Graph graph;
+    auto* add = graph.addOperation(std::make_unique<Add>(&x, &bias));
+    auto* relu = graph.addOperation(std::make_unique<ReLU>(add->getOutput()));
+    graph.setOutput(relu->getOutput());
+    graph.execute();
+    assert(graph.getPlanBuildCount() == 1);
+    x.setData({-5.f, 4.f});
+    graph.execute();
+    assert(graph.getPlanBuildCount() == 1);
+    assert(graph.getOutput()->getData() == std::vector<float>({0.f, 7.f}));
+
+    optimize(graph, fusionPatterns());
+    graph.execute();
+    assert(graph.getPlanBuildCount() == 2);
+    assert(graph.getExecutionOrder().size() == 1);
+    graph.execute();
+    assert(graph.getPlanBuildCount() == 2);
+
+    graph.setOutput(&x);
+    graph.execute();
+    assert(graph.getPlanBuildCount() == 3);
+    assert(graph.getOutput()->getData() == x.getData());
+
+    Graph rewired;
+    auto* first = rewired.addOperation(std::make_unique<ReLU>(&x));
+    auto* last = rewired.addOperation(std::make_unique<ReLU>(&bias));
+    rewired.setOutput(last->getOutput());
+    rewired.execute();
+    // Rewiring directly must introduce the previously unreachable dependency.
+    last->replaceInput(&bias, first->getOutput());
+    rewired.execute();
+    assert(rewired.getPlanBuildCount() == 2);
+    assert(rewired.getOutput()->getData() == std::vector<float>({0.f, 4.f}));
+}
+
+void testAddReusesOutputBuffer() {
+    Tensor x("x", {1.f, 2.f}, {1, 2});
+    Tensor y("y", {3.f, 4.f}, {1, 2});
+    Graph graph;
+    auto* add = graph.addOperation(std::make_unique<Add>(&x, &y));
+    graph.setOutput(add->getOutput());
+    graph.execute();
+    const float* buffer = graph.getOutput()->getData().data();
+    assert(graph.getOutput()->getData() == std::vector<float>({4.f, 6.f}));
+    for (int run = 0; run < 5; ++run) {
+        x.setData({static_cast<float>(run), -10.f});
+        y.setData({2.f, static_cast<float>(run)});
+        graph.execute();
+        assert(graph.getOutput()->getData().data() == buffer);
+        assert(graph.getOutput()->getData() ==
+               std::vector<float>({run + 2.f, run - 10.f}));
+    }
+    assert(graph.getPlanBuildCount() == 1);
+    Tensor empty("empty", std::vector<std::size_t>{0, 2});
+    assert(empty.getWritableData().empty());
+}
+
+void testAllOperationsReuseOutputBuffers() {
+    Tensor x("x", {1.f, -2.f}, {1, 2});
+    Tensor weights("weights", {1.f, 2.f, 3.f, 4.f}, {2, 2});
+    Tensor bias("bias", {1.f, -20.f}, {1, 2});
+    MatMul matmul(&x, &weights);
+    ReLU relu(matmul.getOutput());
+    FusedAddReLU addRelu(&x, &bias);
+    FusedLinearReLU linearRelu(&x, &weights, &bias);
+    std::vector<Operation*> ops{&matmul, &relu, &addRelu, &linearRelu};
+    std::vector<const float*> buffers;
+    for (auto* op : ops) {
+        op->execute();
+        buffers.push_back(op->getOutput()->getData().data());
+    }
+    const std::vector<std::vector<float>> samples{{3.f, 4.f}, {-3.f, -4.f}, {0.f, 0.f}};
+    for (const auto& sample : samples) {
+        x.setData(sample);
+        for (std::size_t i = 0; i < ops.size(); ++i) {
+            ops[i]->execute();
+            assert(ops[i]->getOutput()->getData().data() == buffers[i]);
+        }
+        const float a = sample[0] + 3.f * sample[1];
+        const float b = 2.f * sample[0] + 4.f * sample[1];
+        assert(matmul.getOutput()->getData() == std::vector<float>({a, b}));
+        assert(relu.getOutput()->getData() ==
+               std::vector<float>({std::max(0.f, a), std::max(0.f, b)}));
+        assert(addRelu.getOutput()->getData() == std::vector<float>({
+            std::max(0.f, sample[0] + 1.f), std::max(0.f, sample[1] - 20.f)}));
+        assert(linearRelu.getOutput()->getData() ==
+               std::vector<float>({std::max(0.f, a + 1.f), std::max(0.f, b - 20.f)}));
+    }
+    // A zero-length reduction must overwrite old output with zero each time.
+    Tensor emptyX("x", std::vector<float>{}, {1, 0});
+    Tensor emptyWeights("w", std::vector<float>{}, {0, 2});
+    MatMul zero(&emptyX, &emptyWeights);
+    zero.execute();
+    zero.getOutput()->getWritableData()[0] = 99.f;
+    zero.execute();
+    assert(zero.getOutput()->getData() == std::vector<float>({0.f, 0.f}));
+}
+
 int main() {
     int passed = 0;
     auto run = [&](const char* name, void (*test)()) {
@@ -454,5 +555,8 @@ int main() {
     run("ownership keeps addresses stable", testGraphOwnershipKeepsAddressesStable);
     run("zero-sized dimensions", testZeroSizedDimensions);
     run("32 numerical reference cases", testLinearFusionAgainstReference);
+    run("execution plan caching and invalidation", testExecutionPlanCaching);
+    run("Add output buffer reuse", testAddReusesOutputBuffer);
+    run("all operation output buffers reused", testAllOperationsReuseOutputBuffers);
     std::cout << passed << " tests passed.\n";
 }

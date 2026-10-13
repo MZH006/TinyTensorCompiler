@@ -1,4 +1,5 @@
 #include "Operation.h"
+#include "Topology.h"
 
 #include <algorithm>
 #include <iostream>
@@ -45,11 +46,15 @@ void Operation::replaceInput(Tensor* old_input, Tensor* new_input) {
             new_input->addConsumer(this);
             old_input->removeConsumer(this);
             inputs[i] = new_input;
+            topology::changed();
         }
     }
 }
 
 void Operation::disconnectInputs() {
+    if (!inputs.empty()) {
+        topology::changed();
+    }
     for (Tensor* input : inputs) {
         input->removeConsumer(this);
     }
