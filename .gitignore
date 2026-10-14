@@ -1,6 +1,7 @@
 /main
 *.o
 *.d
+*.dSYM/
 
 /tests
 
